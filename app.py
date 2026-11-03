@@ -94,6 +94,22 @@ def push_history(it, size, status):
               "name": it["src"].name, "full": str(TARGET / it["dst"]), "size": size, "status": status})
     save("history.json", h[-2000:])
 
+def _sig(p):
+    st = p.stat(); return [st.st_size, int(st.st_mtime)]
+
+def mark_copied(src):
+    """Quelle als erledigt merken (Größe + Änderungszeit), damit sie in Sortieren und im Zeitplan nicht erneut auftaucht."""
+    try:
+        if not src.exists(): return
+        m = load("copied.json", {}); m[src.relative_to(SOURCE).as_posix()] = _sig(src)
+        save("copied.json", dict(list(m.items())[-20000:]))
+    except Exception as e:
+        print("copied.json:", e, file=sys.stderr)
+
+def is_copied(cm, p, rel):
+    try: return cm.get(rel) == _sig(p)
+    except OSError: return False
+
 # ---------- Cron ----------
 def _field(txt, lo, hi):
     out = set()
@@ -397,11 +413,13 @@ def safe_source(rel):
 
 def scan():
     """Fertige Dateien (älter als MIN_AGE): (automatisch zuordenbar, unklar)."""
-    now, items, unclear = time.time(), [], []
+    now, items, unclear, cm = time.time(), [], [], load("copied.json", {})
     for p in sorted(SOURCE.rglob("*")):
         if not (p.is_file() and p.suffix.lower() in VIDEO_EXT) or p.name.startswith("."): continue
         if now - p.stat().st_mtime < MIN_AGE: continue
-        rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
+        rel = p.relative_to(SOURCE).as_posix()
+        if is_copied(cm, p, rel): continue
+        cat = guess_category(rel)
         if cat: items.append({"src": p, "dst": target_for(rel, cat)})
         else: unclear.append(rel)
     return items, unclear
@@ -491,6 +509,7 @@ def _run_job(items, source, move):
             if dst.exists() and dst.stat().st_size == size:
                 if move:
                     src.unlink(); push_history(it, size, "war schon vorhanden, Quelle gelöscht"); ok.append((it, size))
+                else: mark_copied(src)
                 with lock:
                     job["done"] += size; job["files_done"] += 1; q["state"] = "vorhanden"
                 continue
@@ -520,6 +539,7 @@ def _run_job(items, source, move):
                 raise IOError("Größe am Ziel stimmt nicht")
             if move: src.unlink()
             push_history(it, size, "verschoben" if move else "kopiert")
+            mark_copied(src)
             ok.append((it, size))
             with lock:
                 job["files_done"] += 1; q["state"] = "fertig"
@@ -851,12 +871,12 @@ def settings_payload():
 
 @app.get("/api/files")
 def files():
-    out = []
+    out, cm = [], load("copied.json", {})
     for p in sorted(SOURCE.rglob("*")):
         if p.is_file() and p.suffix.lower() in VIDEO_EXT:
             rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
             out.append({"path": rel, "size": p.stat().st_size, "category": cat, "target": target_for(rel, cat).as_posix() if cat else "",
-                        "series": series_info(rel)})
+                        "series": series_info(rel), "copied": is_copied(cm, p, rel)})
     shows = {"/".join(Path(f["target"]).parts[:2]) for f in out if f["series"] and f["target"]}
     return jsonify(library=library_eps(shows), files=out, categories=CATEGORIES, source=str(SOURCE), target=str(TARGET), target_mounted=TARGET.is_dir())
 
@@ -922,7 +942,15 @@ def start():
     try:
         for e in request.get_json()["items"]:
             if e["category"] not in CATEGORIES: raise ValueError(f"Kategorie fehlt: {e['path']}")
-            items.append({"src": safe_source(e["path"]), "dst": target_for(e["path"], e["category"])})
+            dst = target_for(e["path"], e["category"])
+            if e.get("target"):                      # manuell angepasster Zielpfad
+                t = Path(str(e["target"]).strip().strip("/"))
+                if (not t.parts or t.is_absolute() or any(x in ("..", ".") or ILLEGAL.search(x) for x in t.parts)
+                        or not Path(e["path"]).suffix or t.suffix.lower() != Path(e["path"]).suffix.lower()):
+                    raise ValueError(f"Ungültiger Zielpfad: {e['target']}")
+                dst = t
+            items.append({"src": safe_source(e["path"]), "dst": dst})
+        if len({i["dst"] for i in items}) != len(items): raise ValueError("Mehrere Dateien hätten denselben Zielpfad.")
     except Exception as e:
         return jsonify(error=str(e)), 400
     if not items: return jsonify(error="Nichts ausgewählt."), 400
@@ -1250,6 +1278,10 @@ dialog .field{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 #sprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
 #sprev div{padding:3px 0;border-top:1px solid var(--line)}#sprev div:first-child{border-top:0}#sprev small{display:block;opacity:.65}
 .gap{font-size:13px;margin-top:4px;color:var(--warn)}.gap.ok{color:var(--ok)}.gap.ghost{color:inherit;opacity:.7}
+.ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
+.ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
+#tdprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
+#tdprev div{padding:2px 0}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
 .badge.live{background:var(--ok);color:#fff;animation:pulse 1.4s ease-in-out infinite}.nav .on .badge.live{background:var(--ok);color:#fff}
 @keyframes pulse{50%{opacity:.55}}
@@ -1314,7 +1346,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   </div>
   <div class="bar tools">
     <button id="reload">↻ Neu laden</button><button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button>
-    <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button>
+    <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button><button id="shc" class="toggle" hidden>✅ Schon kopierte zeigen (<span id="shcn">0</span>)</button>
     <span id="sel" class="sub"></span>
   </div>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
@@ -1325,6 +1357,16 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div id="empty" class="empty" hidden><div class="big">🎉</div><b>Alles sortiert</b>Im Quellordner liegt nichts mehr, was sortiert werden muss.</div></div>
 </section>
 
+<div id="ctx" class="ctx" hidden><button id="ctxedit">✏️ Ziel bearbeiten</button></div>
+<dialog id="tdlg"><form method="dialog" id="tform">
+  <h2 style="margin:0 0 4px">✏️ Ziel bearbeiten</h2>
+  <p class="sub" id="tdet" style="margin:0 0 12px"></p>
+  <label class="l" for="tdin" id="tdl">Zielpfad</label>
+  <input type="text" id="tdin" class="mono" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+  <p class="sub" style="margin:12px 0 4px">So landen die Dateien:</p>
+  <div id="tdprev" class="mono"></div>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="tdcancel">Abbrechen</button><button class="primary" type="submit">Übernehmen</button></div>
+</form></dialog>
 <dialog id="sdlg"><form method="dialog" id="sform">
   <h2 style="margin:0 0 4px">Serie umbenennen</h2>
   <p class="sub" id="sdet" style="margin:0 0 12px"></p>
@@ -1533,14 +1575,17 @@ $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 /* Sortieren */
 const unclearN=()=>files.filter(f=>!f.category).length;
 const checked=f=>f.category?f.sel!==false:f.sel===true;
+let showCopied=false;
 let grouped=false,sgrouped=false,groups=[],sgroups=[];try{grouped=localStorage.getItem("sort_grp")==="1";sgrouped=localStorage.getItem("sort_sgrp")==="1";if(sgrouped)grouped=false}catch{}
 function stats(){const u=unclearN();
   $("st-ready").textContent=files.length-u;$("st-clar").textContent=u;
   $("st-clar-box").classList.toggle("alert",u>0);setBadge("ns",u)}
 async function loadFiles(){
   await loadRules();
-  const r=await api("/api/files");files=r.files;library=r.library||{};cats=r.categories;
-  files.forEach(f=>{if(!f.category)f.sel=false});
+  const r=await api("/api/files");library=r.library||{};cats=r.categories;
+  const nc=r.files.filter(f=>f.copied).length;files=showCopied?r.files:r.files.filter(f=>!f.copied);
+  $("shc").hidden=!nc;$("shcn").textContent=nc;$("shc").classList.toggle("on",showCopied);
+  files.forEach(f=>{if(!f.category||f.copied)f.sel=false});
   $("src").textContent=r.source;$("tgt").textContent=r.target;
   $("warn").innerHTML=r.target_mounted?"":'<div class="banner bad">⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>';
   $("bchips").innerHTML=cats.map(c=>`<button class="chip" data-c="${c}">${ICON[c]} ${c}</button>`).join("");
@@ -1630,7 +1675,7 @@ function row(f,short){const i=files.indexOf(f),name=short&&f.path.includes("/")?
    <td class="chk"><input type="checkbox" data-i="${i}" ${checked(f)?"checked":""} aria-label="markieren"></td>
    <td class="f" title="${esc(f.path)}">${esc(name)}</td>
    <td class="c"><select class="cat" data-i="${i}" aria-label="Kategorie">${f.category?"":'<option value="" selected>Kategorie wählen…</option>'}${cats.map(c=>`<option value="${c}" ${c===f.category?"selected":""}>${ICON[c]} ${c}</option>`).join("")}</select></td>
-   <td class="t">${f.category?esc(f.target):'<span class="tag warn">❓ Unklar</span> Wohin gehört das?'}</td><td class="s">${fmt(f.size)}</td></tr>`}
+   <td class="t">${f.category?(f.custom?'<span class="tag">✏️ angepasst</span> ':"")+esc(f.target):'<span class="tag warn">❓ Unklar</span> Wohin gehört das?'}</td><td class="s">${fmt(f.size)}</td></tr>`}
 function refreshGroups(){
   $("rows").querySelectorAll("input[data-g]").forEach(c=>{const fs=groups[c.dataset.g];
     c.checked=fs.every(checked);c.indeterminate=fs.some(checked)&&!fs.every(checked)})}
@@ -1648,7 +1693,7 @@ function render(){
       const summ=Object.entries(e.cats).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
       html+=`<tr class="grow sg"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
         <td class="f" colspan="2">📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
-        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
+        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button>`:""}<button class="rn" data-eg="${gi}">✏️ Ziel</button>${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
         <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select></td><td class="s"></td></tr>`
         +fs.map(f=>row(f,false)).join("")})
   }else if(grouped){
@@ -1658,7 +1703,7 @@ function render(){
       fs.forEach(f=>{const c=f.category||"?";cnt[c]=(cnt[c]||0)+1});
       const summ=Object.entries(cnt).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
       html+=`<tr class="grow"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Ordner markieren"></td>
-        <td class="f" colspan="2">📁 <b>${k?esc(k):"Lose Dateien"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div></td>
+        <td class="f" colspan="2">📁 <b>${k?esc(k):"Lose Dateien"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><button class="rn" data-eg="${gi}">✏️ Ziel</button><div style="margin-top:4px">${summ}</div></td>
         <td class="c"><select data-g="${gi}" aria-label="Ganzen Ordner zuordnen">${catOpts("Ordner zuordnen als…")}</select></td><td class="s"></td></tr>`
         +fs.map(f=>row(f,true)).join("")})
   }else html=list.map(f=>row(f)).join("");
@@ -1668,6 +1713,7 @@ function render(){
   $("rows").querySelectorAll("select[data-i]").forEach(s=>s.onchange=()=>assign([files[s.dataset.i]],s.value));
   $("rows").querySelectorAll("select[data-g]").forEach(s=>s.onchange=()=>assign(groups[s.dataset.g],s.value));
   $("rows").querySelectorAll("button[data-sg]").forEach(b=>b.onclick=()=>openSeries(sgroups[b.dataset.sg]));
+  $("rows").querySelectorAll("button[data-eg]").forEach(b=>b.onclick=()=>editTarget(groups[b.dataset.eg]));
   refreshGroups();count()}
 async function assign(list,cat){
   if(!cat||!list.length){render();return}
@@ -1675,7 +1721,7 @@ async function assign(list,cat){
   if(changed&&!confirm(`${changed} Datei(en) haben schon eine andere Kategorie und werden auf „${cat}“ umgestellt. Fortfahren?`)){render();return}
   try{
     const r=await api("/api/preview/batch",{items:list.map(f=>({path:f.path,category:cat}))});
-    list.forEach((f,i)=>{f.category=cat;f.sel=true;f.target=r.targets[i]});
+    list.forEach((f,i)=>{f.category=cat;f.sel=true;f.target=r.targets[i];f.custom=false});
     toast(`${list.length} Datei(en) zugeordnet: ${ICON[cat]} ${cat}`,"ok")
   }catch(e){toast(e.message,"bad")}
   tabs();render()}
@@ -1692,6 +1738,13 @@ function count(){$("merge").hidden=mergeCandidates().size<2;const m=files.filter
   $("bulk").hidden=!m.length;$("bn").textContent=`${m.length} markierte zuordnen als`+(un?` (davon ${un} unklar)`:"");
   updateGo()}
 $("reload").onclick=loadFiles;
+$("shc").onclick=()=>{showCopied=!showCopied;loadFiles()};
+let refreshing=false;
+async function refreshKeep(){if(refreshing)return;refreshing=true;try{
+  const keep=new Map(files.map(f=>[f.path,{sel:f.sel,t:f.custom?f.target:null}]));
+  await loadFiles();
+  files.forEach(f=>{const k=keep.get(f.path);if(!k)return;if(k.sel!==undefined)f.sel=k.sel;if(k.t){f.target=k.t;f.custom=true}});
+  tabs();render()}finally{refreshing=false}}
 $("all").onclick=()=>{visible().forEach(f=>f.sel=true);render()};
 $("none").onclick=()=>{visible().forEach(f=>f.sel=false);render()};
 $("master").onchange=e=>{visible().forEach(f=>f.sel=e.target.checked);render()};
@@ -1700,9 +1753,48 @@ function setGroup(){try{localStorage.setItem("sort_grp",grouped?"1":"0");localSt
 $("grp").onclick=()=>{grouped=!grouped;if(grouped)sgrouped=false;setGroup()};
 $("sgrp").onclick=()=>{sgrouped=!sgrouped;if(sgrouped)grouped=false;setGroup()};
 $("go").onclick=async()=>{
-  try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll()}
+  try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category,target:f.custom?f.target:undefined}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll()}
   catch(e){$("err").textContent=e.message}};
 $("stop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
+
+/* Ziel bearbeiten (Rechtsklick oder Knopf) */
+let tdFiles=[],tdBase="",ctxList=null,ctxAt=0;
+const normPath=v=>v.trim().replace(/\\/g,"/").replace(/\/+/g,"/").replace(/^\/|\/$/g,"");
+function editTarget(list){
+  const fs=list.filter(f=>f.category&&f.target);
+  if(!fs.length){toast("Hier gibt es noch kein Ziel. Erst eine Kategorie zuordnen.","bad");return}
+  if(fs.length===1){tdBase=fs[0].target;$("tdl").textContent="Zielpfad der Datei";$("tdet").textContent=fs[0].path}
+  else{const parts=fs.map(f=>f.target.split("/").slice(0,-1));let c=parts[0].slice();
+    parts.forEach(p=>{let i=0;while(i<c.length&&i<p.length&&c[i]===p[i])i++;c.length=i});
+    tdBase=c.join("/");$("tdl").textContent="Zielordner der Gruppe";
+    $("tdet").textContent=`${fs.length} Dateien. Geändert wird nur dieser Teil, der Rest (Season, Dateiname) bleibt.`}
+  tdFiles=fs;$("tdin").value=tdBase;tdPrev();$("tdlg").showModal();$("tdin").focus();$("tdin").select()}
+const tdNew=(f,nb)=>tdFiles.length===1?nb:(nb+f.target.slice(tdBase.length)).replace(/^\//,"");
+function tdErr(nb){
+  if(!nb)return"Der Pfad darf nicht leer sein.";
+  if(nb.split("/").some(x=>x===".."||x==="."))return"„..“ ist nicht erlaubt.";
+  if(/[<>:"|?*\\]/.test(nb))return"Der Pfad enthält ungültige Zeichen.";
+  if(tdFiles.length===1&&nb.split(".").pop().toLowerCase()!==tdFiles[0].target.split(".").pop().toLowerCase())return"Die Dateiendung muss bleiben.";
+  return""}
+function tdPrev(){const nb=normPath($("tdin").value),e=tdErr(nb);
+  $("tdprev").innerHTML=e?`<div class="gap">⚠ ${esc(e)}</div>`:tdFiles.slice(0,6).map(f=>`<div>${esc(tdNew(f,nb))}</div>`).join("")+(tdFiles.length>6?`<div class="sub">… und ${tdFiles.length-6} weitere</div>`:"")}
+$("tdin").addEventListener("input",tdPrev);
+$("tdcancel").onclick=()=>$("tdlg").close();
+$("tform").onsubmit=ev=>{ev.preventDefault();const nb=normPath($("tdin").value),e=tdErr(nb);
+  if(e){toast(e,"bad");return}
+  tdFiles.forEach(f=>{f.target=tdNew(f,nb);f.custom=true;f.sel=true});
+  $("tdlg").close();render();toast(`Ziel geändert für ${tdFiles.length} Datei(en)`,"ok")};
+const hideCtx=()=>{$("ctx").hidden=true};
+$("rows").addEventListener("contextmenu",ev=>{
+  if(ev.target.closest("input,select"))return;
+  const tr=ev.target.closest("tr");if(!tr)return;let list=null;
+  if(tr.classList.contains("grow")){const cb=tr.querySelector("input[data-g]");list=cb&&groups[cb.dataset.g]}
+  else{const cb=tr.querySelector("input[data-i]");list=cb&&[files[cb.dataset.i]]}
+  if(!list)return;ev.preventDefault();ctxList=list;ctxAt=Date.now();
+  const m=$("ctx");m.hidden=false;m.style.left=Math.min(ev.clientX,innerWidth-m.offsetWidth-8)+"px";m.style.top=Math.min(ev.clientY,innerHeight-m.offsetHeight-8)+"px"});
+$("ctxedit").onclick=()=>{hideCtx();if(ctxList)editTarget(ctxList)};
+document.addEventListener("click",hideCtx);document.addEventListener("keydown",e=>{if(e.key==="Escape")hideCtx()});
+window.addEventListener("scroll",()=>{if(Date.now()-ctxAt>500)hideCtx()},true);
 
 /* Verlauf */
 async function loadHist(){hist=(await api("/api/history")).items;setBadge("nh",hist.length);$("st-hist").textContent=hist.length;renderHist()}
@@ -1883,7 +1975,7 @@ $("rstop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…
 $("rtosort").onclick=()=>show("sort");
 
 /* Fortschritt + Zeitplan-Anzeige (läuft immer, zeigt auch Zeitplan-Läufe) */
-let wasRunning=false;
+let wasRunning=false,lastDone=-1;
 $("schgo").onclick=()=>show("sched");
 async function poll(){try{
   const s=await api("/api/status");
@@ -1905,6 +1997,8 @@ async function poll(){try{
     show(view)}
   const nr=$("nr");nr.hidden=!s.running;nr.textContent=s.running?Math.round(pct)+"%":"";
   if(view==="run")renderRun(s);
+  if(s.running&&view==="sort"&&s.files_done!==lastDone){lastDone=s.files_done;refreshKeep()}
+  if(!s.running)lastDone=-1;
   wasRunning=s.running}catch{}}
 setInterval(poll,1000);
 const HV={clarify:"sort",sort:"sort",run:"run",hist:"hist",clean:"clean",ana:"ana",sched:"sched",set:"set"};
