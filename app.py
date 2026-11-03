@@ -96,6 +96,22 @@ def push_history(it, size, status):
               "name": it["src"].name, "full": str(TARGET / it["dst"]), "size": size, "status": status})
     save("history.json", h[-2000:])
 
+def _sig(p):
+    st = p.stat(); return [st.st_size, int(st.st_mtime)]
+
+def mark_copied(src):
+    """Quelle als erledigt merken (Größe + Änderungszeit), damit sie in Sortieren und im Zeitplan nicht erneut auftaucht."""
+    try:
+        if not src.exists(): return
+        m = load("copied.json", {}); m[src.relative_to(SOURCE).as_posix()] = _sig(src)
+        save("copied.json", dict(list(m.items())[-20000:]))
+    except Exception as e:
+        print("copied.json:", e, file=sys.stderr)
+
+def is_copied(cm, p, rel):
+    try: return cm.get(rel) == _sig(p)
+    except OSError: return False
+
 # ---------- Cron ----------
 def _field(txt, lo, hi):
     out = set()
@@ -452,11 +468,13 @@ def purge_samples():
 
 def scan():
     """Fertige Dateien (älter als MIN_AGE): (automatisch zuordenbar, unklar)."""
-    now, items, unclear = time.time(), [], []
+    now, items, unclear, cm = time.time(), [], [], load("copied.json", {})
     for p in sorted(SOURCE.rglob("*")):
         if not (p.is_file() and p.suffix.lower() in VIDEO_EXT) or p.name.startswith(".") or SAMPLE.search(p.name): continue
         if now - p.stat().st_mtime < MIN_AGE: continue
-        rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
+        rel = p.relative_to(SOURCE).as_posix()
+        if is_copied(cm, p, rel): continue
+        cat = guess_category(rel)
         if cat: items.append({"src": p, "dst": target_for(rel, cat)})
         else: unclear.append(rel)
     return items, unclear
@@ -546,6 +564,7 @@ def _run_job(items, source, move):
             if dst.exists() and dst.stat().st_size == size:
                 if move:
                     src.unlink(); push_history(it, size, "war schon vorhanden, Quelle gelöscht"); ok.append((it, size))
+                else: mark_copied(src)
                 with lock:
                     job["done"] += size; job["files_done"] += 1; q["state"] = "vorhanden"
                 continue
@@ -575,6 +594,7 @@ def _run_job(items, source, move):
                 raise IOError("Größe am Ziel stimmt nicht")
             if move: src.unlink()
             push_history(it, size, "verschoben" if move else "kopiert")
+            mark_copied(src)
             ok.append((it, size))
             with lock:
                 job["files_done"] += 1; q["state"] = "fertig"
@@ -911,12 +931,12 @@ def settings_payload():
 
 @app.get("/api/files")
 def files():
-    out = []
+    out, cm = [], load("copied.json", {})
     for p in sorted(SOURCE.rglob("*")):
         if p.is_file() and p.suffix.lower() in VIDEO_EXT and not SAMPLE.search(p.name):
             rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
             out.append({"path": rel, "size": p.stat().st_size, "category": cat, "target": target_for(rel, cat).as_posix() if cat else "",
-                        "series": series_info(rel)})
+                        "series": series_info(rel), "copied": is_copied(cm, p, rel)})
     shows = {show_dir(f["target"]) for f in out if f["series"] and f["target"]}
     return jsonify(library=library_eps(shows), files=out, categories=CATEGORIES, source=str(SOURCE), target=str(TARGET), target_mounted=TARGET.is_dir())
 
@@ -1347,6 +1367,8 @@ tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix
 #fprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
 #fprev div{padding:3px 0;border-top:1px solid var(--line)}#fprev div:first-child{border-top:0}#fprev small{display:block;opacity:.65}
 .gap{font-size:13px;margin-top:4px;color:var(--warn)}.gap.ok{color:var(--ok)}.gap.ghost{color:inherit;opacity:.7}
+.ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
+.ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
 .badge.live{background:var(--ok);color:#fff;animation:pulse 1.4s ease-in-out infinite}.nav .on .badge.live{background:var(--ok);color:#fff}
 @keyframes pulse{50%{opacity:.55}}
@@ -1415,7 +1437,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   </div>
   <div class="bar tools">
     <button id="reload">↻ Neu laden</button><button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button>
-    <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button>
+    <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button><button id="shc" class="toggle" hidden>✅ Schon kopierte zeigen (<span id="shcn">0</span>)</button>
     <span id="sel" class="sub"></span>
   </div>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
@@ -1426,6 +1448,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div id="empty" class="empty" hidden><div class="big">🎉</div><b>Alles sortiert</b>Im Quellordner liegt nichts mehr, was sortiert werden muss.</div></div>
 </section>
 
+<div id="ctx" class="ctx" hidden><button id="ctxedit">✏️ Ziel bearbeiten</button></div>
 <dialog id="sdlg"><form method="dialog" id="sform">
   <h2 style="margin:0 0 4px">Serie umbenennen</h2>
   <p class="sub" id="sdet" style="margin:0 0 12px"></p>
@@ -1653,6 +1676,7 @@ $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 
 /* Sortieren */
 const unclearN=()=>files.filter(f=>!f.category).length;
+let showCopied=false;
 const checked=f=>f.sel===true;
 let grouped=false,sgrouped=true,groups=[],sgroups=[],sopen=new Set(["","d:"]);try{grouped=localStorage.getItem("sort_grp")==="1";const sg=localStorage.getItem("sort_sgrp");sgrouped=sg===null?!grouped:sg==="1";if(sgrouped)grouped=false}catch{}
 function stats(){const u=unclearN();
@@ -1660,7 +1684,9 @@ function stats(){const u=unclearN();
   $("st-clar-box").classList.toggle("alert",u>0);setBadge("ns",u)}
 async function loadFiles(){
   await loadRules();
-  const r=await api("/api/files"),marked=new Set(files.filter(checked).map(f=>f.path));files=r.files;library=r.library||{};cats=r.categories;
+  const r=await api("/api/files"),marked=new Set(files.filter(checked).map(f=>f.path));library=r.library||{};cats=r.categories;
+  const nc=r.files.filter(f=>f.copied).length;files=showCopied?r.files:r.files.filter(f=>!f.copied);
+  $("shc").hidden=!nc;$("shcn").textContent=nc;$("shc").classList.toggle("on",showCopied);
   files.forEach(f=>{f.sel=marked.has(f.path)});
   $("src").textContent=r.source;$("tgt").textContent=r.target;
   $("warn").innerHTML=r.target_mounted?"":'<div class="banner bad">⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>';
@@ -1884,6 +1910,7 @@ function count(){const mc=mergeCandidates().size;$("merge").hidden=mc<2;$("mbtn"
   $("bulk").hidden=!m.length;$("bn").textContent=`${m.length} markierte zuordnen als`+(un?` (davon ${un} unklar)`:"");
   updateGo()}
 $("reload").onclick=loadFiles;
+$("shc").onclick=()=>{showCopied=!showCopied;loadFiles()};
 $("all").onclick=()=>{visible().forEach(f=>f.sel=true);render()};
 $("none").onclick=()=>{visible().forEach(f=>f.sel=false);render()};
 $("master").onchange=e=>{visible().forEach(f=>f.sel=e.target.checked);render()};
@@ -1895,6 +1922,22 @@ $("go").onclick=async()=>{
   try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll()}
   catch(e){$("err").textContent=e.message}};
 $("stop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
+
+/* Rechtsklick: Ziel bearbeiten (öffnet den Zielordner-Dialog mit dem vorhandenen Pfad) */
+let ctxList=null,ctxAt=0;
+const hideCtx=()=>{$("ctx").hidden=true};
+$("rows").addEventListener("contextmenu",ev=>{
+  if(ev.target.closest("input,select"))return;
+  const tr=ev.target.closest("tr");if(!tr)return;let list=null;
+  if(tr.classList.contains("grow")){const cb=tr.querySelector("input[data-g]");list=cb&&groups[cb.dataset.g]}
+  else{const cb=tr.querySelector("input[data-i]");list=cb&&[files[cb.dataset.i]]}
+  if(!list)return;
+  if(!list.some(f=>f.category&&f.target)){toast("Hier gibt es noch kein Ziel. Erst eine Kategorie zuordnen.","bad");ev.preventDefault();return}
+  ev.preventDefault();ctxList=list;ctxAt=Date.now();
+  const m=$("ctx");m.hidden=false;m.style.left=Math.max(4,Math.min(ev.clientX,innerWidth-m.offsetWidth-8))+"px";m.style.top=Math.max(4,Math.min(ev.clientY,innerHeight-m.offsetHeight-8))+"px"});
+$("ctxedit").onclick=()=>{hideCtx();if(ctxList)openFolder(ctxList.filter(f=>f.category&&f.target))};
+document.addEventListener("click",hideCtx);document.addEventListener("keydown",e=>{if(e.key==="Escape")hideCtx()});
+window.addEventListener("scroll",()=>{if(Date.now()-ctxAt>500)hideCtx()},true);
 
 /* Verlauf */
 async function loadHist(){hist=(await api("/api/history")).items;setBadge("nh",hist.length);$("st-hist").textContent=hist.length;renderHist()}
@@ -2075,7 +2118,8 @@ $("rstop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…
 $("rtosort").onclick=()=>show("sort");
 
 /* Fortschritt + Zeitplan-Anzeige (läuft immer, zeigt auch Zeitplan-Läufe) */
-let wasRunning=false;
+let wasRunning=false,lastDone=-1;
+const dlgOpen=()=>[...document.querySelectorAll("dialog")].some(d=>d.open);
 $("schgo").onclick=()=>show("sched");
 async function poll(){try{
   const s=await api("/api/status");
@@ -2097,6 +2141,8 @@ async function poll(){try{
     show(view)}
   const nr=$("nr");nr.hidden=!s.running;nr.textContent=s.running?Math.round(pct)+"%":"";
   if(view==="run")renderRun(s);
+  if(s.running&&view==="sort"&&s.files_done!==lastDone&&!dlgOpen()){lastDone=s.files_done;reloadKeep()}
+  if(!s.running)lastDone=-1;
   wasRunning=s.running}catch{}}
 setInterval(poll,1000);
 const HV={clarify:"sort",sort:"sort",run:"run",hist:"hist",clean:"clean",ana:"ana",sched:"sched",set:"set"};
