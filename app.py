@@ -26,6 +26,8 @@ AUTH_USER = os.environ.get("AUTH_USER", "admin")
 AUTH_PASS = os.environ.get("AUTH_PASS", "")   # leer = kein Login (z.B. wenn der Reverse Proxy schon schützt)
 MIN_AGE = int(os.environ.get("MIN_AGE", "120"))
 LOCKFILE = "/tmp/media-sorter.lock"
+VERSION = "1.1.0"
+BUILD = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:7]    # zeigt, welche app.py wirklich läuft
 CATEGORIES = ["Filme", "Serien", "Anime", "Dokus"]
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".mpg", ".mpeg", ".srt", ".ass", ".sub"}
 PARTIAL_EXT = {".part", ".crdownload", ".aria2", ".!ut", ".tmp", ".jdownloader", ".download"}
@@ -93,22 +95,6 @@ def push_history(it, size, status):
     h.append({"t": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "cat": it["dst"].parts[0],
               "name": it["src"].name, "full": str(TARGET / it["dst"]), "size": size, "status": status})
     save("history.json", h[-2000:])
-
-def _sig(p):
-    st = p.stat(); return [st.st_size, int(st.st_mtime)]
-
-def mark_copied(src):
-    """Quelle als erledigt merken (Größe + Änderungszeit), damit sie in Sortieren und im Zeitplan nicht erneut auftaucht."""
-    try:
-        if not src.exists(): return
-        m = load("copied.json", {}); m[src.relative_to(SOURCE).as_posix()] = _sig(src)
-        save("copied.json", dict(list(m.items())[-20000:]))
-    except Exception as e:
-        print("copied.json:", e, file=sys.stderr)
-
-def is_copied(cm, p, rel):
-    try: return cm.get(rel) == _sig(p)
-    except OSError: return False
 
 # ---------- Cron ----------
 def _field(txt, lo, hi):
@@ -186,6 +172,8 @@ YEAR = re.compile(r"(?<![\dA-Za-z])(19[2-9]\d|20[0-3]\d)(?![\dA-Za-z])")
 def guess_category(rel):
     """Kategorie oder "" wenn unklar (= Klärungsbedarf, Zeitplan überspringt die Datei)."""
     low, name = rel.lower(), Path(rel).name
+    ov = get_paths().get(rel)
+    if ov and ov.get("cat") in CATEGORIES: return ov["cat"]
     r = rule_for_path(rel)
     if r and r.get("category") in CATEGORIES: return r["category"]
     if re.search(r"doku|documentary|docu\b|dokumentation", low): return "Dokus"
@@ -402,8 +390,48 @@ def jf_target(rel, cat):
         return Path(cat) / base / f"{base}{extra}{ext}"
     return Path(cat) / name
 
-def target_for(rel, cat):
+def default_target(rel, cat):
     return jf_target(rel, cat) if cfg()["jellyfin"] else legacy_target(rel, cat)
+
+# Eigene Zielordner (paths.json): {Quelldatei: {"folder": Zielordner, "n": ersetzte Pfadteile, "cat": Kategorie}}
+_paths_cache = {"v": None}
+def get_paths():
+    if _paths_cache["v"] is None:
+        d = load("paths.json", {})
+        _paths_cache["v"] = d if isinstance(d, dict) else {}
+    return _paths_cache["v"]
+
+def set_paths(paths):
+    _paths_cache["v"] = paths; save("paths.json", paths)
+
+def target_for(rel, cat):
+    ov = get_paths().get(rel)
+    if not ov or ov.get("cat") != cat: return default_target(rel, cat)
+    if "folder" not in ov: return Path(ov["dst"])    # Eintrag im alten Format
+    return Path(ov["folder"], *default_target(rel, cat).parts[ov["n"]:])
+
+def clean_folder(s):
+    """'anime/Dragonball/' -> ['Anime', 'Dragonball']; '..' und unerlaubte Zeichen fallen weg."""
+    parts = [x for x in (_safe(y) for y in re.split(r"[\\/]+", (s or "").strip())) if x]
+    cat = next((c for c in CATEGORIES if parts and c.lower() == parts[0].lower()), None)
+    if not cat: raise ValueError("Der Zielordner muss mit einer Kategorie beginnen: " + ", ".join(CATEGORIES))
+    return [cat] + parts[1:]
+
+def folder_targets(rels, folder):
+    """Ersetzt den gemeinsamen Anfang der Standardpfade (höchstens Kategorie/Serie) durch den Zielordner.
+    Eine Serie wird so umgezogen, mehrere Serien landen getrennt in Unterordnern davon."""
+    parts = clean_folder(folder)
+    defaults = [default_target(r, parts[0]).parts for r in rels]
+    n = min([2] + [len(d) - 1 for d in defaults])
+    while n > 1 and len({d[:n] for d in defaults}) > 1: n -= 1
+    return parts, n, [Path(*parts, *d[n:]) for d in defaults]
+
+TARGET_SEASON = re.compile(r"Season \d+")
+def show_dir(target):
+    """Serienordner eines Zielpfads: alles vor 'Season NN', sonst Kategorie/Name."""
+    parts = Path(target).parts
+    i = next((n for n, x in enumerate(parts) if TARGET_SEASON.fullmatch(x)), 0)
+    return "/".join(parts[:i] if i > 1 else parts[:2])
 
 def safe_source(rel):
     p = (SOURCE / rel).resolve()
@@ -411,15 +439,24 @@ def safe_source(rel):
         raise ValueError(f"Ungültiger Pfad: {rel}")
     return p
 
+SAMPLE = re.compile(r"\.sample\.[^.]+$", re.I)    # film.sample.mkv, aber nicht Free.Sample.2016.mkv
+def purge_samples():
+    """Löscht fertige Sample-Dateien im Quellordner (nie im Ziel) und protokolliert sie."""
+    now = time.time()
+    for p in SOURCE.rglob("*"):
+        try:
+            if SAMPLE.search(p.name) and p.is_file() and now - p.stat().st_mtime >= MIN_AGE:
+                p.unlink(); print("Sample gelöscht:", p, file=sys.stderr)
+        except OSError as e:
+            print("Sample nicht gelöscht:", p, e, file=sys.stderr)
+
 def scan():
     """Fertige Dateien (älter als MIN_AGE): (automatisch zuordenbar, unklar)."""
-    now, items, unclear, cm = time.time(), [], [], load("copied.json", {})
+    now, items, unclear = time.time(), [], []
     for p in sorted(SOURCE.rglob("*")):
-        if not (p.is_file() and p.suffix.lower() in VIDEO_EXT) or p.name.startswith("."): continue
+        if not (p.is_file() and p.suffix.lower() in VIDEO_EXT) or p.name.startswith(".") or SAMPLE.search(p.name): continue
         if now - p.stat().st_mtime < MIN_AGE: continue
-        rel = p.relative_to(SOURCE).as_posix()
-        if is_copied(cm, p, rel): continue
-        cat = guess_category(rel)
+        rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
         if cat: items.append({"src": p, "dst": target_for(rel, cat)})
         else: unclear.append(rel)
     return items, unclear
@@ -509,7 +546,6 @@ def _run_job(items, source, move):
             if dst.exists() and dst.stat().st_size == size:
                 if move:
                     src.unlink(); push_history(it, size, "war schon vorhanden, Quelle gelöscht"); ok.append((it, size))
-                else: mark_copied(src)
                 with lock:
                     job["done"] += size; job["files_done"] += 1; q["state"] = "vorhanden"
                 continue
@@ -539,7 +575,6 @@ def _run_job(items, source, move):
                 raise IOError("Größe am Ziel stimmt nicht")
             if move: src.unlink()
             push_history(it, size, "verschoben" if move else "kopiert")
-            mark_copied(src)
             ok.append((it, size))
             with lock:
                 job["files_done"] += 1; q["state"] = "fertig"
@@ -640,6 +675,9 @@ def run_job(items, source="manuell"):
             notify(f"▶️ Media Sorter: Kopieren gestartet ({source})\n{len(items)} Datei(en), {hsize(size)}\n"
                    + " · ".join(f"{k} {v}" for k, v in cats.items()), "tg_start")
         ok = _run_job(items, source, c["move_after"])
+        moved = {it["src"].relative_to(SOURCE).as_posix() for it, _ in ok if not it["src"].exists()}
+        if moved & get_paths().keys():
+            set_paths({k: v for k, v in get_paths().items() if k not in moved})
         if c["cleanup_after"]:
             removed = cleanup_leftovers()
     finally:
@@ -758,6 +796,8 @@ def watcher():
     state = {"last_new": set(), "stable": 0}
     while True:
         time.sleep(WATCH_INTERVAL)
+        try: purge_samples()
+        except Exception as e: print("Sample-Fehler:", e, file=sys.stderr)
         try: watch_once(state)
         except Exception as e: print("Watcher-Fehler:", e, file=sys.stderr)
 
@@ -871,13 +911,13 @@ def settings_payload():
 
 @app.get("/api/files")
 def files():
-    out, cm = [], load("copied.json", {})
+    out = []
     for p in sorted(SOURCE.rglob("*")):
-        if p.is_file() and p.suffix.lower() in VIDEO_EXT:
+        if p.is_file() and p.suffix.lower() in VIDEO_EXT and not SAMPLE.search(p.name):
             rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
             out.append({"path": rel, "size": p.stat().st_size, "category": cat, "target": target_for(rel, cat).as_posix() if cat else "",
-                        "series": series_info(rel), "copied": is_copied(cm, p, rel)})
-    shows = {"/".join(Path(f["target"]).parts[:2]) for f in out if f["series"] and f["target"]}
+                        "series": series_info(rel)})
+    shows = {show_dir(f["target"]) for f in out if f["series"] and f["target"]}
     return jsonify(library=library_eps(shows), files=out, categories=CATEGORIES, source=str(SOURCE), target=str(TARGET), target_mounted=TARGET.is_dir())
 
 @app.get("/api/rules")
@@ -934,6 +974,34 @@ def preview_batch():
     items = (request.get_json() or {}).get("items", [])[:5000]
     return jsonify(targets=[target_for(e["path"], e["category"]).as_posix() if e.get("category") in CATEGORIES else "" for e in items])
 
+@app.post("/api/paths/preview")
+def paths_preview():
+    d = request.get_json() or {}
+    rels = (d.get("items") or [])[:5000]
+    try:
+        return jsonify(targets=[t.as_posix() for t in folder_targets(rels, d.get("folder"))[2]] if rels else [])
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+
+@app.post("/api/paths")
+def paths_set():
+    """Zielordner für Dateien merken; leerer Ordner setzt sie auf den Standardpfad zurück."""
+    d = request.get_json() or {}
+    rels = (d.get("items") or [])[:5000]
+    paths = dict(get_paths())
+    try:
+        for r in rels: safe_source(r)
+        if (d.get("folder") or "").strip():
+            if rels:
+                parts, n, _ = folder_targets(rels, d["folder"])
+                paths.update({r: {"folder": "/".join(parts), "n": n, "cat": parts[0]} for r in rels})
+        else:
+            for r in rels: paths.pop(r, None)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    set_paths(paths)
+    return jsonify(ok=True)
+
 @app.post("/api/start")
 def start():
     if job["running"] or busy(): return jsonify(error="Es läuft bereits ein Job."), 409
@@ -942,15 +1010,7 @@ def start():
     try:
         for e in request.get_json()["items"]:
             if e["category"] not in CATEGORIES: raise ValueError(f"Kategorie fehlt: {e['path']}")
-            dst = target_for(e["path"], e["category"])
-            if e.get("target"):                      # manuell angepasster Zielpfad
-                t = Path(str(e["target"]).strip().strip("/"))
-                if (not t.parts or t.is_absolute() or any(x in ("..", ".") or ILLEGAL.search(x) for x in t.parts)
-                        or not Path(e["path"]).suffix or t.suffix.lower() != Path(e["path"]).suffix.lower()):
-                    raise ValueError(f"Ungültiger Zielpfad: {e['target']}")
-                dst = t
-            items.append({"src": safe_source(e["path"]), "dst": dst})
-        if len({i["dst"] for i in items}) != len(items): raise ValueError("Mehrere Dateien hätten denselben Zielpfad.")
+            items.append({"src": safe_source(e["path"]), "dst": target_for(e["path"], e["category"])})
     except Exception as e:
         return jsonify(error=str(e)), 400
     if not items: return jsonify(error="Nichts ausgewählt."), 400
@@ -1088,7 +1148,7 @@ def cron_preview():
 
 @app.get("/")
 def index():
-    return Response(PAGE, mimetype="text/html")
+    return Response(PAGE.replace("{{VERSION}}", f"v{VERSION} · {BUILD}"), mimetype="text/html", headers={"Cache-Control": "no-store"})
 
 # ---------- Frontend ----------
 PAGE = r"""<!doctype html>
@@ -1122,6 +1182,7 @@ code,.path,input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,mon
 .hero{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:14px}
 .brand{display:flex;gap:12px;align-items:center}
 .logo{font-size:28px;line-height:1;background:var(--soft);border-radius:12px;padding:8px 10px}
+.hero{position:relative;padding-top:28px}.ver{position:absolute;top:8px;right:18px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .hero p{color:var(--muted);font-size:14px}
 .flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
 .pathchip{background:var(--soft);border-radius:10px;padding:5px 10px;min-width:0;max-width:100%}
@@ -1277,11 +1338,15 @@ dialog input,dialog select{width:100%;box-sizing:border-box}
 dialog .field{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 #sprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
 #sprev div{padding:3px 0;border-top:1px solid var(--line)}#sprev div:first-child{border-top:0}#sprev small{display:block;opacity:.65}
+tr.grow.sg,tr.grow.fg{cursor:pointer}tr.grow .cv{min-height:30px;min-width:30px;padding:0;margin-right:6px}
+tr.grow.hasgap{--cc:var(--warn)}tr.solo.hasgap{--cc:var(--warn)}tr.solo .rn{margin-left:8px;min-height:30px;padding:2px 10px;font-size:13px;font-weight:400}
+tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix(in srgb,var(--warn) 14%,var(--surface))}tr.hasgap .gap{font-weight:700;font-size:15px}
+#mrows{max-height:50vh;overflow:auto}.mrow{display:grid;grid-template-columns:1fr 90px 120px;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
+.mrow:first-child{border-top:0}.mrow.head{font-size:13px;color:var(--muted);border-top:0;padding-top:0}.mrow .bad{outline:2px solid var(--warn)}
+@media (max-width:520px){.mrow{grid-template-columns:1fr 1fr}.mrow>:first-child{grid-column:1/-1}}
+#fprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
+#fprev div{padding:3px 0;border-top:1px solid var(--line)}#fprev div:first-child{border-top:0}#fprev small{display:block;opacity:.65}
 .gap{font-size:13px;margin-top:4px;color:var(--warn)}.gap.ok{color:var(--ok)}.gap.ghost{color:inherit;opacity:.7}
-.ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
-.ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
-#tdprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
-#tdprev div{padding:2px 0}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
 .badge.live{background:var(--ok);color:#fff;animation:pulse 1.4s ease-in-out infinite}.nav .on .badge.live{background:var(--ok);color:#fff}
 @keyframes pulse{50%{opacity:.55}}
@@ -1300,7 +1365,10 @@ tr.grow.sg td{background:var(--soft)}tr.grow .rn{margin-left:8px;min-height:30px
 .rule:first-child{border-top:0}.rule .sub{display:block}
 .bulk{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center;background:var(--soft);border-radius:12px;padding:8px 12px;margin-bottom:12px}
 tr.grow{--cc:var(--brand)}tr.grow td{background:var(--soft)}tr.grow td.f{font-weight:400}tr.grow select{width:100%}
-#rows.grouped tr:not(.grow) td.f{padding-left:28px}
+#rows.grouped tr:not(.grow) td.f{padding-left:12px}
+#rows tr.grow td{border-top:12px solid var(--surface)}#rows tr.grow:first-child td{border-top:0}
+@media (min-width:721px){#rows.grouped tr:not(.grow):not(.solo) td.chk{padding-left:36px}}
+@media (max-width:720px){#rows.grouped tr:not(.grow) td.f{padding-left:0}#rows tr.grow td{border-top:0}#rows.grouped tr:not(.grow):not(.solo){margin-left:18px}}
 .kv{display:grid;grid-template-columns:150px 1fr;gap:4px 12px;padding:9px 0;border-top:1px solid var(--line)}.kv:first-child{border-top:0}
 @media (max-width:720px){.kv{grid-template-columns:1fr}}
 .grp{font-weight:700;margin:16px 0 2px}.grp small{font-weight:400;color:var(--muted);margin-left:6px}
@@ -1319,6 +1387,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 </style></head><body><main>
 
 <header class="hero">
+  <span class="ver" title="Version und Prüfsumme der laufenden app.py">{{VERSION}}</span>
   <div class="brand"><span class="logo" aria-hidden="true">🎞️</span>
     <div><h1>Media Sorter</h1>
       <div class="flow"><span class="pathchip" title="Quellordner">📥 <code id="src">…</code></span><span class="arrow" aria-hidden="true">➜</span><span class="pathchip" title="Ziel auf dem NFS-Share">🗄️ <code id="tgt">…</code></span></div></div>
@@ -1346,27 +1415,17 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   </div>
   <div class="bar tools">
     <button id="reload">↻ Neu laden</button><button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button>
-    <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button><button id="shc" class="toggle" hidden>✅ Schon kopierte zeigen (<span id="shcn">0</span>)</button>
+    <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button>
     <span id="sel" class="sub"></span>
   </div>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
-  <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div></div>
+  <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
   <div class="table"><table>
     <thead><tr><th style="width:40px"><input type="checkbox" id="master" aria-label="Alle"></th><th>🎞️ Datei</th><th style="width:170px">🏷️ Kategorie</th><th>📍 Wird abgelegt als</th><th>💾 Größe</th></tr></thead>
     <tbody id="rows"></tbody></table>
     <div id="empty" class="empty" hidden><div class="big">🎉</div><b>Alles sortiert</b>Im Quellordner liegt nichts mehr, was sortiert werden muss.</div></div>
 </section>
 
-<div id="ctx" class="ctx" hidden><button id="ctxedit">✏️ Ziel bearbeiten</button></div>
-<dialog id="tdlg"><form method="dialog" id="tform">
-  <h2 style="margin:0 0 4px">✏️ Ziel bearbeiten</h2>
-  <p class="sub" id="tdet" style="margin:0 0 12px"></p>
-  <label class="l" for="tdin" id="tdl">Zielpfad</label>
-  <input type="text" id="tdin" class="mono" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-  <p class="sub" style="margin:12px 0 4px">So landen die Dateien:</p>
-  <div id="tdprev" class="mono"></div>
-  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="tdcancel">Abbrechen</button><button class="primary" type="submit">Übernehmen</button></div>
-</form></dialog>
 <dialog id="sdlg"><form method="dialog" id="sform">
   <h2 style="margin:0 0 4px">Serie umbenennen</h2>
   <p class="sub" id="sdet" style="margin:0 0 12px"></p>
@@ -1380,6 +1439,26 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div id="sprev" class="mono"></div>
   <p class="sub" id="snote" style="margin-top:10px">Wird gemerkt: Alle Dateien dieser Serie, auch künftige und vom Zeitplan, bekommen diesen Namen.</p>
   <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="scancel">Abbrechen</button><button class="primary" id="ssave" type="submit">Speichern</button></div>
+</form></dialog>
+
+<dialog id="mdlg" style="width:min(680px,calc(100vw - 32px))"><form method="dialog" id="mform">
+  <h2 style="margin:0 0 4px">Jahr &amp; TMDB-ID eintragen</h2>
+  <p class="sub" id="mdet" style="margin:0 0 12px"></p>
+  <div id="mrows"></div>
+  <p class="sub" id="merr" role="alert" style="margin-top:10px"></p>
+  <p class="sub" style="margin-top:10px">Wird pro Serie gemerkt und gilt auch für künftige Folgen und den Zeitplan. Nicht geänderte Serien bleiben unberührt.</p>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="mcancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+</form></dialog>
+
+<dialog id="fdlg"><form method="dialog" id="fform">
+  <h2 style="margin:0 0 4px">Zielordner ändern</h2>
+  <p class="sub" id="fdet" style="margin:0 0 12px"></p>
+  <label class="l" for="fpath">Zielordner</label>
+  <input type="text" id="fpath" class="mono" autocomplete="off" placeholder="Anime/Dragonball" required>
+  <p class="sub" id="fcount" style="margin:12px 0 4px"></p>
+  <div id="fprev" class="mono"></div>
+  <p class="sub" style="margin-top:10px">Wird für genau diese Dateien gemerkt und gilt auch für den Zeitplan. Später neu geladene Folgen bekommen wieder den Standardpfad.</p>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="freset">Standardpfad</button><button type="button" id="fcancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
 </form></dialog>
 
 <section id="v-run" hidden>
@@ -1574,18 +1653,15 @@ $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 
 /* Sortieren */
 const unclearN=()=>files.filter(f=>!f.category).length;
-const checked=f=>f.category?f.sel!==false:f.sel===true;
-let showCopied=false;
-let grouped=false,sgrouped=false,groups=[],sgroups=[];try{grouped=localStorage.getItem("sort_grp")==="1";sgrouped=localStorage.getItem("sort_sgrp")==="1";if(sgrouped)grouped=false}catch{}
+const checked=f=>f.sel===true;
+let grouped=false,sgrouped=true,groups=[],sgroups=[],sopen=new Set(["","d:"]);try{grouped=localStorage.getItem("sort_grp")==="1";const sg=localStorage.getItem("sort_sgrp");sgrouped=sg===null?!grouped:sg==="1";if(sgrouped)grouped=false}catch{}
 function stats(){const u=unclearN();
   $("st-ready").textContent=files.length-u;$("st-clar").textContent=u;
   $("st-clar-box").classList.toggle("alert",u>0);setBadge("ns",u)}
 async function loadFiles(){
   await loadRules();
-  const r=await api("/api/files");library=r.library||{};cats=r.categories;
-  const nc=r.files.filter(f=>f.copied).length;files=showCopied?r.files:r.files.filter(f=>!f.copied);
-  $("shc").hidden=!nc;$("shcn").textContent=nc;$("shc").classList.toggle("on",showCopied);
-  files.forEach(f=>{if(!f.category||f.copied)f.sel=false});
+  const r=await api("/api/files"),marked=new Set(files.filter(checked).map(f=>f.path));files=r.files;library=r.library||{};cats=r.categories;
+  files.forEach(f=>{f.sel=marked.has(f.path)});
   $("src").textContent=r.source;$("tgt").textContent=r.target;
   $("warn").innerHTML=r.target_mounted?"":'<div class="banner bad">⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>';
   $("bchips").innerHTML=cats.map(c=>`<button class="chip" data-c="${c}">${ICON[c]} ${c}</button>`).join("");
@@ -1597,7 +1673,7 @@ function seriesBar(){
   visible().forEach(f=>{const s=f.series;if(!s)return;const e=m.get(s.key)||{key:s.key,names:{},files:[],cats:{}};
     e.names[s.name]=(e.names[s.name]||0)+1;e.files.push(f);e.cats[f.category||"?"]=(e.cats[f.category||"?"]||0)+1;m.set(s.key,e)});
   const list=[...m.values()].filter(e=>e.files.length>=1).sort((a,b)=>b.files.length-a.files.length).slice(0,40);
-  seriesList=list;$("series").hidden=!list.length;
+  seriesList=list;$("series").hidden=sgrouped||!list.length;
   $("schips").innerHTML=list.map((e,i)=>{const n=Object.entries(e.names).sort((a,b)=>b[1]-a[1])[0][0];
     const c=Object.entries(e.cats).sort((a,b)=>b[1]-a[1])[0][0];
     const gp=gaps(e.files).bad.length?" · ⚠ Lücke":"";
@@ -1605,8 +1681,9 @@ function seriesBar(){
   $("schips").querySelectorAll("button").forEach(b=>b.onclick=()=>openSeries(seriesList[b.dataset.s]))}
 let seriesList=[],curSeries=null,ptm,library={};
 const rng=a=>{const o=[];for(let i=0;i<a.length;){let j=i;while(j+1<a.length&&a[j+1]===a[j]+1)j++;o.push(i===j?`E${String(a[i]).padStart(2,"0")}`:`E${String(a[i]).padStart(2,"0")}–E${String(a[j]).padStart(2,"0")}`);i=j+1}return o.join(", ")};
+const showDir=t=>{const p=t.split("/"),i=p.findIndex(x=>/^Season \d+$/.test(x));return(i>1?p.slice(0,i):p.slice(0,2)).join("/")};
 function gaps(fs){
-  const by={};fs.forEach(f=>{const s=f.series;if(!s)return;const sd=f.target?f.target.split("/").slice(0,2).join("/"):"";
+  const by={};fs.forEach(f=>{const s=f.series;if(!s)return;const sd=f.target?showDir(f.target):"";
     s.eps.forEach(e=>{const b=by[s.season]=by[s.season]||{n:{},sd};b.n[e]=(b.n[e]||0)+1;if(!b.sd)b.sd=sd})});
   const bad=[],good=[];
   Object.keys(by).sort((a,b)=>a-b).forEach(sn=>{const b=by[sn],lib=((library[b.sd]||{})[sn])||[];
@@ -1618,7 +1695,7 @@ function gaps(fs){
     if(miss.length)p.push(`Lücke ${rng(miss)}`);
     if(dup.length)p.push(`doppelt ${rng(dup)}`);
     const S="S"+String(sn).padStart(2,"0");
-    if(p.length)bad.push(`${S}: ${p.join(", ")}`);else good.push(`${S} lückenlos ${rng([lo,hi].filter((v,i,a)=>a.indexOf(v)===i))}${lib.length?` (${lib.length} schon im Ziel)`:""}`)});
+    if(p.length)bad.push(`${S}: ${p.join(", ")}`);else good.push(`${S} lückenlos ${rng([...new Set([lo,hi])]).replace(", ","–")}${lib.length?` (${lib.length} schon im Ziel)`:""}`)});
   return{bad,good}}
 const gapHtml=fs=>{const g=gaps(fs);return g.bad.length?`<div class="gap">⚠ ${g.bad.map(esc).join(" · ")}</div>`:g.good.length&&fs.length>1?`<div class="gap ok">✓ ${g.good.map(esc).join(" · ")}</div>`:""};
 async function sprev(){
@@ -1646,12 +1723,73 @@ $("scancel").onclick=()=>$("sdlg").close();
 $("sform").onsubmit=async ev=>{ev.preventDefault();
   if(!$("scat").value){toast("Bitte eine Kategorie wählen","bad");return}
   try{
-    const before=new Map(files.map(f=>[f.path,{sel:f.sel,had:!!f.category}]));
     let r;for(const d of curSeries.origs)r=await api("/api/rules",{detected:d,name:$("sname").value,year:$("syear").value,tmdb:$("stmdb").value,category:$("scat").value});
-    rulesCache=r.rules;$("sdlg").close();await loadFiles();
-    files.forEach(f=>{const b=before.get(f.path);if(!b)return;f.sel=!b.had&&f.category?true:b.sel});
-    tabs();render();toast("Serie gemerkt","ok")
+    await api("/api/paths",{items:curSeries.files.map(f=>f.path),folder:""});
+    rulesCache=r.rules;$("sdlg").close();await reloadKeep();toast("Serie gemerkt","ok")
   }catch(e){toast(e.message,"bad")}};
+async function reloadKeep(){
+  const before=new Map(files.map(f=>[f.path,{sel:f.sel,had:!!f.category}]));
+  await loadFiles();
+  files.forEach(f=>{const b=before.get(f.path);if(!b)return;f.sel=!b.had&&f.category?true:b.sel});
+  tabs();render()}
+/* Zielordner: ersetzt den gemeinsamen Anfang der Pfade (höchstens Kategorie/Serie) */
+let curFolder=[],ftm;
+function commonFolder(fs){
+  const ds=fs.filter(f=>f.target).map(f=>f.target.split("/").slice(0,-1));if(!ds.length)return"";
+  let n=Math.min(2,...ds.map(d=>d.length));
+  while(n>1&&new Set(ds.map(d=>d.slice(0,n).join("/"))).size>1)n--;
+  return new Set(ds.map(d=>d[0])).size>1?"":ds[0].slice(0,n).join("/")}
+async function fprev(){
+  const folder=$("fpath").value,n=curFolder.length;
+  if(!folder.trim()){$("fcount").textContent="Bitte einen Ordner eingeben, z. B. Anime/Dragonball";$("fprev").innerHTML="";return}
+  try{const r=await api("/api/paths/preview",{items:curFolder.map(f=>f.path),folder});
+    if($("fpath").value!==folder)return;
+    $("fcount").innerHTML=`<b>${n} ${n===1?"Datei wird":"Dateien werden"}</b> so abgelegt:`;
+    $("fprev").innerHTML=curFolder.slice(0,200).map((f,i)=>`<div>${esc(f.path)}<small>→ ${esc(r.targets[i]||"")}</small></div>`).join("")
+      +(n>200?`<div>… und ${n-200} weitere</div>`:"")}
+  catch(e){$("fcount").textContent=e.message;$("fprev").innerHTML=""}}
+function openFolder(list){
+  if(!list.length)return;
+  curFolder=list;$("fpath").value=commonFolder(list);
+  const names=new Set(list.filter(f=>f.series).map(f=>f.series.key));
+  $("fdet").textContent=`${list.length} Datei(en)`+(names.size>1?` aus ${names.size} Serien, jede bleibt als eigener Unterordner erhalten`:"");
+  $("fdlg").showModal();fprev()}
+$("fbtn").onclick=()=>openFolder(files.filter(checked));
+$("fpath").addEventListener("input",()=>{clearTimeout(ftm);ftm=setTimeout(fprev,250)});
+$("fcancel").onclick=()=>$("fdlg").close();
+/* Jahr & TMDB für mehrere Serien */
+let metaRows=[];
+function openMeta(){
+  metaRows=[...mergeCandidates().values()].map(fs=>{
+    const rule=rulesCache.find(x=>fs.some(f=>f.series.rkey===x.key)),n={},c={},o=new Map();
+    fs.forEach(f=>{n[f.series.name]=(n[f.series.name]||0)+1;if(f.category)c[f.category]=(c[f.category]||0)+1;o.set(f.series.rkey,f.series.orig)});
+    const top=m=>Object.entries(m).sort((a,b)=>b[1]-a[1]).map(e=>e[0])[0]||"";
+    return{name:rule?rule.name:top(n),count:fs.length,origs:[...o.values()],category:rule&&rule.category||top(c),
+      year:rule?rule.year:(fs[0].series.year||""),tmdb:rule?rule.tmdb:""}}).sort((a,b)=>a.name.localeCompare(b.name));
+  $("mdet").textContent=`${metaRows.length} markierte ${metaRows.length===1?"Serie":"Serien"}`;$("merr").textContent="";
+  $("mrows").innerHTML=`<div class="mrow head"><span>Serie</span><span>Jahr</span><span>TMDB-ID</span></div>`+metaRows.map((r,i)=>`<div class="mrow"><div><b>${esc(r.name)}</b> <span class="sub">${r.count} Datei(en)</span></div>
+    <input type="text" data-y="${i}" inputmode="numeric" maxlength="4" placeholder="1996" value="${esc(r.year)}" aria-label="Jahr von ${esc(r.name)}">
+    <input type="text" data-t="${i}" inputmode="numeric" placeholder="12609" value="${esc(r.tmdb)}" aria-label="TMDB-ID von ${esc(r.name)}"></div>`).join("");
+  $("mdlg").showModal()}
+$("mbtn").onclick=openMeta;
+$("mcancel").onclick=()=>$("mdlg").close();
+$("mform").onsubmit=async ev=>{ev.preventDefault();
+  const val=(a,i)=>$("mrows").querySelector(`[data-${a}="${i}"]`).value.trim();
+  let bad=false;$("mrows").querySelectorAll("input").forEach(x=>x.classList.remove("bad"));
+  metaRows.forEach((r,i)=>{if(val("y",i)&&!/^(19[2-9]\d|20[0-3]\d)$/.test(val("y",i))){$("mrows").querySelector(`[data-y="${i}"]`).classList.add("bad");bad=true}
+    if(val("t",i)&&!/^\d{1,10}$/.test(val("t",i))){$("mrows").querySelector(`[data-t="${i}"]`).classList.add("bad");bad=true}});
+  if(bad){$("merr").textContent="Bitte die markierten Felder prüfen: Jahr als 1920 bis 2039, TMDB-ID nur als Zahl.";return}
+  const todo=metaRows.map((r,i)=>({r,year:val("y",i),tmdb:val("t",i)})).filter(x=>x.year!==x.r.year||x.tmdb!==x.r.tmdb);
+  if(!todo.length){$("mdlg").close();toast("Nichts geändert");return}
+  try{
+    for(const{r,year,tmdb}of todo)for(const d of r.origs)rulesCache=(await api("/api/rules",{detected:d,name:r.name,year,tmdb,category:r.category})).rules;
+    $("mdlg").close();await reloadKeep();toast(`${todo.length} ${todo.length===1?"Serie":"Serien"} aktualisiert`,"ok")
+  }catch(e){$("merr").textContent=e.message;await reloadKeep()}};
+async function saveFolder(folder,msg){
+  try{await api("/api/paths",{items:curFolder.map(f=>f.path),folder});$("fdlg").close();await reloadKeep();toast(msg,"ok")}
+  catch(e){toast(e.message,"bad")}}
+$("freset").onclick=()=>saveFolder("","Standardpfad wiederhergestellt");
+$("fform").onsubmit=ev=>{ev.preventDefault();saveFolder($("fpath").value,"Zielordner gemerkt")};
 let rulesCache=[];
 async function loadRules(){try{rulesCache=(await api("/api/rules")).rules}catch{}}
 function drawRules(){
@@ -1671,11 +1809,11 @@ function tabs(){
   stats();seriesBar()}
 const visible=()=>files.filter(f=>filter==="Alle"||(filter==="Klärung"?!f.category:f.category===filter));
 const catOpts=(first)=>`<option value="">${first}</option>`+cats.map(c=>`<option value="${c}">${ICON[c]} ${c}</option>`).join("");
-function row(f,short){const i=files.indexOf(f),name=short&&f.path.includes("/")?f.path.slice(f.path.indexOf("/")+1):f.path;return `<tr data-cat="${esc(f.category)}">
+function row(f,short,extra="",cls=""){const i=files.indexOf(f),name=short&&f.path.includes("/")?f.path.slice(f.path.indexOf("/")+1):f.path;return `<tr class="${cls}" data-cat="${esc(f.category)}">
    <td class="chk"><input type="checkbox" data-i="${i}" ${checked(f)?"checked":""} aria-label="markieren"></td>
-   <td class="f" title="${esc(f.path)}">${esc(name)}</td>
+   <td class="f" title="${esc(f.path)}">${esc(name)}${extra}</td>
    <td class="c"><select class="cat" data-i="${i}" aria-label="Kategorie">${f.category?"":'<option value="" selected>Kategorie wählen…</option>'}${cats.map(c=>`<option value="${c}" ${c===f.category?"selected":""}>${ICON[c]} ${c}</option>`).join("")}</select></td>
-   <td class="t">${f.category?(f.custom?'<span class="tag">✏️ angepasst</span> ':"")+esc(f.target):'<span class="tag warn">❓ Unklar</span> Wohin gehört das?'}</td><td class="s">${fmt(f.size)}</td></tr>`}
+   <td class="t">${f.category?esc(f.target):'<span class="tag warn">❓ Unklar</span> Wohin gehört das?'}</td><td class="s">${fmt(f.size)}</td></tr>`}
 function refreshGroups(){
   $("rows").querySelectorAll("input[data-g]").forEach(c=>{const fs=groups[c.dataset.g];
     c.checked=fs.every(checked);c.indeterminate=fs.some(checked)&&!fs.every(checked)})}
@@ -1687,25 +1825,30 @@ function render(){
   if(sgrouped){
     const g=new Map();list.forEach(f=>{const k=f.series?f.series.key:"";if(!g.has(k))g.set(k,{key:k,names:{},files:[],cats:{},origs:[]});
       const e=g.get(k);e.files.push(f);if(f.series&&!e.origs.includes(f.series.orig))e.origs.push(f.series.orig);const c=f.category||"?";e.cats[c]=(e.cats[c]||0)+1;if(f.series)e.names[f.series.name]=(e.names[f.series.name]||0)+1});
-    [...g.values()].sort((a,b)=>(a.key===""?1:0)-(b.key===""?1:0)||Object.keys(a.names)[0]?.localeCompare(Object.keys(b.names)[0]||"")).forEach(e=>{
+    g.forEach(e=>e.gap=e.key&&gaps(e.files).bad.length?1:0);
+    [...g.values()].sort((a,b)=>(a.key===""?1:0)-(b.key===""?1:0)||b.gap-a.gap||Object.keys(a.names)[0]?.localeCompare(Object.keys(b.names)[0]||"")).forEach(e=>{
       const fs=e.files,gi=groups.push(fs)-1;sgroups[gi]=e;
+      if(fs.length===1){html+=row(fs[0],false,e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>${gapHtml(fs)}`:"",`solo${e.gap?" hasgap":""}`);return}
       const nm=Object.entries(e.names).sort((a,b)=>b[1]-a[1])[0];
       const summ=Object.entries(e.cats).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
-      html+=`<tr class="grow sg"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
-        <td class="f" colspan="2">📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
-        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button>`:""}<button class="rn" data-eg="${gi}">✏️ Ziel</button>${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
+      const open=sopen.has(e.key),dir=commonFolder(fs);
+      html+=`<tr class="grow sg${e.gap?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
+        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Folgen ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
+        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${dir?`<div class="sub mono" style="margin-top:4px">📍 ${esc(dir)}</div>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
         <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select></td><td class="s"></td></tr>`
-        +fs.map(f=>row(f,false)).join("")})
+        +(open?fs.map(f=>row(f,false)).join(""):"")})
   }else if(grouped){
     const g=new Map();list.forEach(f=>{const k=f.path.includes("/")?f.path.split("/")[0]:"";if(!g.has(k))g.set(k,[]);g.get(k).push(f)});
     [...g.keys()].sort((a,b)=>(a===""?1:0)-(b===""?1:0)||a.localeCompare(b)).forEach(k=>{
-      const fs=g.get(k),gi=groups.push(fs)-1,cnt={};
+      const fs=g.get(k),gi=groups.push(fs)-1,cnt={},key="d:"+k,open=sopen.has(key);sgroups[gi]={key};
+      if(fs.length===1){const gp=fs[0].series?gaps(fs).bad.length:0;html+=row(fs[0],false,fs[0].series?gapHtml(fs):"",`solo${gp?" hasgap":""}`);return}
+      const sks=new Set(fs.map(f=>f.series?f.series.key:"")),one=sks.size===1&&!sks.has("");
       fs.forEach(f=>{const c=f.category||"?";cnt[c]=(cnt[c]||0)+1});
       const summ=Object.entries(cnt).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
-      html+=`<tr class="grow"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Ordner markieren"></td>
-        <td class="f" colspan="2">📁 <b>${k?esc(k):"Lose Dateien"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><button class="rn" data-eg="${gi}">✏️ Ziel</button><div style="margin-top:4px">${summ}</div></td>
+      html+=`<tr class="grow fg${one&&gaps(fs).bad.length?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Ordner markieren"></td>
+        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Dateien ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📁 <b>${k?esc(k):"Lose Dateien"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div>${one?gapHtml(fs):""}</td>
         <td class="c"><select data-g="${gi}" aria-label="Ganzen Ordner zuordnen">${catOpts("Ordner zuordnen als…")}</select></td><td class="s"></td></tr>`
-        +fs.map(f=>row(f,true)).join("")})
+        +(open?fs.map(f=>row(f,true)).join(""):"")})
   }else html=list.map(f=>row(f)).join("");
   $("rows").innerHTML=html;
   $("rows").querySelectorAll("input[data-i]").forEach(c=>c.onchange=()=>{files[c.dataset.i].sel=c.checked;count();refreshGroups()});
@@ -1713,7 +1856,10 @@ function render(){
   $("rows").querySelectorAll("select[data-i]").forEach(s=>s.onchange=()=>assign([files[s.dataset.i]],s.value));
   $("rows").querySelectorAll("select[data-g]").forEach(s=>s.onchange=()=>assign(groups[s.dataset.g],s.value));
   $("rows").querySelectorAll("button[data-sg]").forEach(b=>b.onclick=()=>openSeries(sgroups[b.dataset.sg]));
-  $("rows").querySelectorAll("button[data-eg]").forEach(b=>b.onclick=()=>editTarget(groups[b.dataset.eg]));
+  $("rows").querySelectorAll("button[data-fg]").forEach(b=>b.onclick=()=>openFolder(groups[b.dataset.fg]));
+  $("rows").querySelectorAll("tr[data-tg]").forEach(t=>t.onclick=ev=>{
+    if(ev.target.closest("input,select,button:not(.cv)"))return;
+    const k=sgroups[t.dataset.tg].key;sopen.has(k)?sopen.delete(k):sopen.add(k);render()});
   refreshGroups();count()}
 async function assign(list,cat){
   if(!cat||!list.length){render();return}
@@ -1721,11 +1867,11 @@ async function assign(list,cat){
   if(changed&&!confirm(`${changed} Datei(en) haben schon eine andere Kategorie und werden auf „${cat}“ umgestellt. Fortfahren?`)){render();return}
   try{
     const r=await api("/api/preview/batch",{items:list.map(f=>({path:f.path,category:cat}))});
-    list.forEach((f,i)=>{f.category=cat;f.sel=true;f.target=r.targets[i];f.custom=false});
+    list.forEach((f,i)=>{f.category=cat;f.sel=true;f.target=r.targets[i]});
     toast(`${list.length} Datei(en) zugeordnet: ${ICON[cat]} ${cat}`,"ok")
   }catch(e){toast(e.message,"bad")}
   tabs();render()}
-const selected=()=>files.filter(f=>f.category&&f.sel!==false);
+const selected=()=>files.filter(f=>f.category&&f.sel===true);
 function updateGo(){const s=selected();
   $("go").disabled=running||!s.length;
   $("go").textContent=running?"Läuft…":s.length?`▶ ${s.length} ${s.length===1?"Datei":"Dateien"} kopieren (${fmt(s.reduce((a,f)=>a+f.size,0))})`:"Nichts ausgewählt"}
@@ -1733,18 +1879,11 @@ function mergeCandidates(){const m=new Map();files.filter(checked).forEach(f=>{i
 $("merge").onclick=()=>{const m=mergeCandidates(),fs=[...m.values()].flat(),names={},cats={};
   fs.forEach(f=>{names[f.series.name]=(names[f.series.name]||0)+1;const c=f.category||"?";cats[c]=(cats[c]||0)+1});
   openSeries({key:"",names,files:fs,cats})};
-function count(){$("merge").hidden=mergeCandidates().size<2;const m=files.filter(checked),u=unclearN(),un=m.filter(f=>!f.category).length;
+function count(){const mc=mergeCandidates().size;$("merge").hidden=mc<2;$("mbtn").hidden=!mc;const m=files.filter(checked),u=unclearN(),un=m.filter(f=>!f.category).length;
   $("sel").textContent=`${m.length} markiert`+(u?`, ${u} ohne Kategorie`:"");
   $("bulk").hidden=!m.length;$("bn").textContent=`${m.length} markierte zuordnen als`+(un?` (davon ${un} unklar)`:"");
   updateGo()}
 $("reload").onclick=loadFiles;
-$("shc").onclick=()=>{showCopied=!showCopied;loadFiles()};
-let refreshing=false;
-async function refreshKeep(){if(refreshing)return;refreshing=true;try{
-  const keep=new Map(files.map(f=>[f.path,{sel:f.sel,t:f.custom?f.target:null}]));
-  await loadFiles();
-  files.forEach(f=>{const k=keep.get(f.path);if(!k)return;if(k.sel!==undefined)f.sel=k.sel;if(k.t){f.target=k.t;f.custom=true}});
-  tabs();render()}finally{refreshing=false}}
 $("all").onclick=()=>{visible().forEach(f=>f.sel=true);render()};
 $("none").onclick=()=>{visible().forEach(f=>f.sel=false);render()};
 $("master").onchange=e=>{visible().forEach(f=>f.sel=e.target.checked);render()};
@@ -1753,48 +1892,9 @@ function setGroup(){try{localStorage.setItem("sort_grp",grouped?"1":"0");localSt
 $("grp").onclick=()=>{grouped=!grouped;if(grouped)sgrouped=false;setGroup()};
 $("sgrp").onclick=()=>{sgrouped=!sgrouped;if(sgrouped)grouped=false;setGroup()};
 $("go").onclick=async()=>{
-  try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category,target:f.custom?f.target:undefined}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll()}
+  try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll()}
   catch(e){$("err").textContent=e.message}};
 $("stop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
-
-/* Ziel bearbeiten (Rechtsklick oder Knopf) */
-let tdFiles=[],tdBase="",ctxList=null,ctxAt=0;
-const normPath=v=>v.trim().replace(/\\/g,"/").replace(/\/+/g,"/").replace(/^\/|\/$/g,"");
-function editTarget(list){
-  const fs=list.filter(f=>f.category&&f.target);
-  if(!fs.length){toast("Hier gibt es noch kein Ziel. Erst eine Kategorie zuordnen.","bad");return}
-  if(fs.length===1){tdBase=fs[0].target;$("tdl").textContent="Zielpfad der Datei";$("tdet").textContent=fs[0].path}
-  else{const parts=fs.map(f=>f.target.split("/").slice(0,-1));let c=parts[0].slice();
-    parts.forEach(p=>{let i=0;while(i<c.length&&i<p.length&&c[i]===p[i])i++;c.length=i});
-    tdBase=c.join("/");$("tdl").textContent="Zielordner der Gruppe";
-    $("tdet").textContent=`${fs.length} Dateien. Geändert wird nur dieser Teil, der Rest (Season, Dateiname) bleibt.`}
-  tdFiles=fs;$("tdin").value=tdBase;tdPrev();$("tdlg").showModal();$("tdin").focus();$("tdin").select()}
-const tdNew=(f,nb)=>tdFiles.length===1?nb:(nb+f.target.slice(tdBase.length)).replace(/^\//,"");
-function tdErr(nb){
-  if(!nb)return"Der Pfad darf nicht leer sein.";
-  if(nb.split("/").some(x=>x===".."||x==="."))return"„..“ ist nicht erlaubt.";
-  if(/[<>:"|?*\\]/.test(nb))return"Der Pfad enthält ungültige Zeichen.";
-  if(tdFiles.length===1&&nb.split(".").pop().toLowerCase()!==tdFiles[0].target.split(".").pop().toLowerCase())return"Die Dateiendung muss bleiben.";
-  return""}
-function tdPrev(){const nb=normPath($("tdin").value),e=tdErr(nb);
-  $("tdprev").innerHTML=e?`<div class="gap">⚠ ${esc(e)}</div>`:tdFiles.slice(0,6).map(f=>`<div>${esc(tdNew(f,nb))}</div>`).join("")+(tdFiles.length>6?`<div class="sub">… und ${tdFiles.length-6} weitere</div>`:"")}
-$("tdin").addEventListener("input",tdPrev);
-$("tdcancel").onclick=()=>$("tdlg").close();
-$("tform").onsubmit=ev=>{ev.preventDefault();const nb=normPath($("tdin").value),e=tdErr(nb);
-  if(e){toast(e,"bad");return}
-  tdFiles.forEach(f=>{f.target=tdNew(f,nb);f.custom=true;f.sel=true});
-  $("tdlg").close();render();toast(`Ziel geändert für ${tdFiles.length} Datei(en)`,"ok")};
-const hideCtx=()=>{$("ctx").hidden=true};
-$("rows").addEventListener("contextmenu",ev=>{
-  if(ev.target.closest("input,select"))return;
-  const tr=ev.target.closest("tr");if(!tr)return;let list=null;
-  if(tr.classList.contains("grow")){const cb=tr.querySelector("input[data-g]");list=cb&&groups[cb.dataset.g]}
-  else{const cb=tr.querySelector("input[data-i]");list=cb&&[files[cb.dataset.i]]}
-  if(!list)return;ev.preventDefault();ctxList=list;ctxAt=Date.now();
-  const m=$("ctx");m.hidden=false;m.style.left=Math.min(ev.clientX,innerWidth-m.offsetWidth-8)+"px";m.style.top=Math.min(ev.clientY,innerHeight-m.offsetHeight-8)+"px"});
-$("ctxedit").onclick=()=>{hideCtx();if(ctxList)editTarget(ctxList)};
-document.addEventListener("click",hideCtx);document.addEventListener("keydown",e=>{if(e.key==="Escape")hideCtx()});
-window.addEventListener("scroll",()=>{if(Date.now()-ctxAt>500)hideCtx()},true);
 
 /* Verlauf */
 async function loadHist(){hist=(await api("/api/history")).items;setBadge("nh",hist.length);$("st-hist").textContent=hist.length;renderHist()}
@@ -1975,7 +2075,7 @@ $("rstop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…
 $("rtosort").onclick=()=>show("sort");
 
 /* Fortschritt + Zeitplan-Anzeige (läuft immer, zeigt auch Zeitplan-Läufe) */
-let wasRunning=false,lastDone=-1;
+let wasRunning=false;
 $("schgo").onclick=()=>show("sched");
 async function poll(){try{
   const s=await api("/api/status");
@@ -1997,8 +2097,6 @@ async function poll(){try{
     show(view)}
   const nr=$("nr");nr.hidden=!s.running;nr.textContent=s.running?Math.round(pct)+"%":"";
   if(view==="run")renderRun(s);
-  if(s.running&&view==="sort"&&s.files_done!==lastDone){lastDone=s.files_done;refreshKeep()}
-  if(!s.running)lastDone=-1;
   wasRunning=s.running}catch{}}
 setInterval(poll,1000);
 const HV={clarify:"sort",sort:"sort",run:"run",hist:"hist",clean:"clean",ana:"ana",sched:"sched",set:"set"};
