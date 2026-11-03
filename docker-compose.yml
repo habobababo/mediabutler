@@ -1,0 +1,23 @@
+services:
+  media-sorter:
+    build: .
+    container_name: media-sorter
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Europe/Berlin          # Zeitzone für den Cron-Zeitplan
+      SOURCE_DIR: /incoming
+      TARGET_DIR: /media
+      DATA_DIR: /data
+      PUBLIC_URL: "https://media.p.pixelpotato.de"   # für Links in Telegram-Nachrichten
+      AUTH_USER: "admin"           # Login der Web-UI (Basic Auth)
+      AUTH_PASS: "bitte-aendern"   # leer lassen = kein Login
+      MIN_AGE: "120"               # Dateien/Ordner jünger als 120 s werden im Auto-Modus ignoriert
+      WATCH_INTERVAL: "60"         # alle 60 s nach neuen Dateien und Problemen schauen (Telegram)
+      MOVE_AFTER: "0"              # nur Startwert, danach in der Web-UI unter "Einstellungen" änderbar
+    volumes:
+      - /mnt/share/media/downloads:/incoming   # Quelle
+      - /mnt/share/media:/media                # Ziel (NFS bereits gemountet)
+      - ./data:/data                           # Einstellungen + Verlauf
+      - ./app.py:/app/app.py:ro                # Update = app.py austauschen + restart
