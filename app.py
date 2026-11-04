@@ -1753,6 +1753,16 @@ $("sform").onsubmit=async ev=>{ev.preventDefault();
     await api("/api/paths",{items:curSeries.files.map(f=>f.path),folder:""});
     rulesCache=r.rules;$("sdlg").close();await reloadKeep();toast("Serie gemerkt","ok")
   }catch(e){toast(e.message,"bad")}};
+/* Zusammengelegte Serien wieder trennen: löscht die gemerkten Regeln der enthaltenen Namen */
+async function splitSeries(fs){
+  const names=new Map();fs.forEach(f=>{if(f.series)names.set(f.series.rkey,f.series.orig)});
+  const rules=rulesCache.filter(r=>names.has(r.key));
+  if(!rules.length){toast("Zu dieser Gruppe gibt es keine gemerkte Regel zum Aufheben.","bad");return}
+  const list=[...names.values()].map(x=>"„"+x+"“").join(", ");
+  if(!confirm(`Aufteilen in: ${list}\n\nDie gemerkten Namen, Jahre und TMDB-IDs dieser ${rules.length} Regel(n) werden gelöscht. Danach gilt wieder der erkannte Name.`))return;
+  try{for(const r of rules)rulesCache=(await api("/api/rules/delete",{key:r.key})).rules;
+    await reloadKeep();toast(`Aufgeteilt in ${names.size} Serien`,"ok")}
+  catch(e){toast(e.message,"bad")}}
 async function reloadKeep(){
   const before=new Map(files.map(f=>[f.path,{sel:f.sel,had:!!f.category}]));
   await loadFiles();
@@ -1860,7 +1870,7 @@ function render(){
       const open=sopen.has(e.key),dir=commonFolder(fs);
       html+=`<tr class="grow sg${e.gap?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
         <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Folgen ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
-        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${dir?`<div class="sub mono" style="margin-top:4px">📍 ${esc(dir)}</div>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
+        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${new Set(fs.map(f=>f.series&&f.series.rkey).filter(Boolean)).size>1?`<button class="rn" data-split="${gi}" title="Zusammenlegung aufheben">✂️ Aufteilen</button>`:""}${dir?`<div class="sub mono" style="margin-top:4px">📍 ${esc(dir)}</div>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
         <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select></td><td class="s"></td></tr>`
         +(open?fs.map(f=>row(f,false)).join(""):"")})
   }else if(grouped){
@@ -1882,6 +1892,7 @@ function render(){
   $("rows").querySelectorAll("select[data-i]").forEach(s=>s.onchange=()=>assign([files[s.dataset.i]],s.value));
   $("rows").querySelectorAll("select[data-g]").forEach(s=>s.onchange=()=>assign(groups[s.dataset.g],s.value));
   $("rows").querySelectorAll("button[data-sg]").forEach(b=>b.onclick=()=>openSeries(sgroups[b.dataset.sg]));
+  $("rows").querySelectorAll("button[data-split]").forEach(b=>b.onclick=()=>splitSeries(groups[b.dataset.split]));
   $("rows").querySelectorAll("button[data-fg]").forEach(b=>b.onclick=()=>openFolder(groups[b.dataset.fg]));
   $("rows").querySelectorAll("tr[data-tg]").forEach(t=>t.onclick=ev=>{
     if(ev.target.closest("input,select,button:not(.cv)"))return;
