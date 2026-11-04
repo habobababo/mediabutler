@@ -58,7 +58,7 @@ DEFAULT_CFG = {"enabled": False, "cron": "0 3 * * *", "move_after": os.environ.g
                "tg_unclear": True, "tg_unclear_sig": "", "tg_new": True, "tg_progress": True,
                "tg_errors": True, "tg_silent": True, "jellyfin": True,
                "jf_scan": bool(os.environ.get("JELLYFIN_URL") and os.environ.get("JELLYFIN_API_KEY")),
-               "jf_url": os.environ.get("JELLYFIN_URL", "").rstrip("/"), "jf_key": os.environ.get("JELLYFIN_API_KEY", ""), "jf_last": "", "public_url": os.environ.get("PUBLIC_URL", "").rstrip("/")}
+               "jf_url": os.environ.get("JELLYFIN_URL", "").rstrip("/"), "jf_key": os.environ.get("JELLYFIN_API_KEY", ""), "jf_last": "", "jf_mode": "partial", "jf_root": os.environ.get("JELLYFIN_ROOT", "").rstrip("/"), "public_url": os.environ.get("PUBLIC_URL", "").rstrip("/")}
 _mem, _flock = {}, threading.Lock()
 
 def load(name, default):
@@ -753,7 +753,11 @@ def run_job(items, source="manuell"):
             notify(f"▶️ Media Sorter: Kopieren gestartet ({source})\n{len(items)} Datei(en), {hsize(size)}\n"
                    + " · ".join(f"{k} {v}" for k, v in cats.items()), "tg_start")
         ok = _run_job(items, source, c["move_after"])
-        if ok: _scan_due[0] = True
+        if ok:
+            _scan_due[0] = True
+            for it, _ in ok:
+                pp = Path(it["dst"]).parts
+                _scan_paths.add("/".join(pp[:2]) if len(pp) >= 3 else "/".join(pp[:-1]))
         moved = {it["src"].relative_to(SOURCE).as_posix() for it, _ in ok if not it["src"].exists()}
         if moved & get_paths().keys():
             set_paths({k: v for k, v in get_paths().items() if k not in moved})
@@ -789,7 +793,7 @@ def run_job(items, source="manuell"):
 # Warteschlange: Aufträge (UI, Zeitplan) laufen nacheinander; neue werden hinten angestellt, statt abgelehnt zu werden.
 qcv = threading.Condition()
 pending, qstate, _qid, _qworker = [], {"active": None}, [0], []
-_scan_due = [False]
+_scan_due, _scan_paths = [False], set()
 
 def jf_refresh(url, key):
     """Jellyfin: Bibliotheks-Scan anstoßen (POST /Library/Refresh, braucht API-Key). -> (ok, Text)"""
@@ -805,11 +809,38 @@ def jf_refresh(url, key):
     except Exception as e:
         return False, f"nicht erreichbar: {e}"
 
+def jf_updated(url, key, paths):
+    """Teil-Scan: nur die genannten Ordner melden (POST /Library/Media/Updated). -> (ok, Text)"""
+    url = (url or "").strip().rstrip("/")
+    body = json.dumps({"Updates": [{"Path": p, "UpdateType": "Created"} for p in paths]}).encode()
+    try:
+        req = urllib.request.Request(url + "/Library/Media/Updated", data=body, method="POST",
+                                     headers={"X-Emby-Token": key, "Content-Type": "application/json",
+                                              "Authorization": f'MediaBrowser Token="{key}"'})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return True, f"Teil-Scan für {len(paths)} Ordner gestartet (HTTP {r.status})"
+    except urllib.error.HTTPError as e:
+        return False, "API-Key ungültig (HTTP 401)" if e.code == 401 else f"HTTP {e.code}"
+    except Exception as e:
+        return False, f"nicht erreichbar: {e}"
+
+def jf_paths(c, rels):
+    root = (c["jf_root"] or str(TARGET)).rstrip("/")
+    return sorted(f"{root}/{r}" for r in rels if r)
+
 def jf_after_queue():
     c = cfg()
+    rels = sorted(_scan_paths)
+    _scan_paths.clear()
     if not (c["jf_scan"] and _scan_due[0]): _scan_due[0] = False; return
     _scan_due[0] = False
-    ok, msg = jf_refresh(c["jf_url"], c["jf_key"])
+    if c["jf_mode"] == "partial" and rels:
+        ok, msg = jf_updated(c["jf_url"], c["jf_key"], jf_paths(c, rels))
+        if not ok:
+            ok2, msg2 = jf_refresh(c["jf_url"], c["jf_key"])
+            msg = f"Teil-Scan fehlgeschlagen ({msg}); " + ("voller Scan gestartet" if ok2 else msg2); ok = ok2
+    else:
+        ok, msg = jf_refresh(c["jf_url"], c["jf_key"])
     save_cfg(jf_last=f"{datetime.now():%Y-%m-%d %H:%M:%S}: {msg}")
     if not ok: notify(f"⚠️ Media Sorter: Jellyfin-Scan fehlgeschlagen – {msg}", "tg_errors")
 
@@ -1336,7 +1367,9 @@ def settings_set():
     jkey = str(d.get("jf_key", "")).strip() or old["jf_key"]
     if d.get("jf_scan") and not (re.match(r"^https?://\S+$", jurl) and jkey):
         return jsonify(error="Jellyfin: Adresse (http://…) und API-Key eintragen."), 400
-    save_cfg(jf_scan=bool(d.get("jf_scan")), jf_url=jurl, jf_key=jkey,
+    jroot = str(d.get("jf_root", "")).strip().rstrip("/")
+    save_cfg(jf_scan=bool(d.get("jf_scan")), jf_url=jurl, jf_key=jkey, jf_root=jroot,
+             jf_mode="full" if d.get("jf_mode") == "full" else "partial",
              enabled=bool(d.get("enabled")), cron=" ".join(d["cron"].split()),
              move_after=bool(d.get("move_after")), cleanup_after=bool(d.get("cleanup_after")),
              tg_enabled=bool(d.get("tg_enabled")), tg_token=tok, tg_chat=chat,
@@ -1834,6 +1867,8 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div id="jfbox" style="margin:6px 0 0 30px;display:grid;gap:8px">
       <input id="jfurl" placeholder="http://jellyfin:8096" autocomplete="off">
       <input id="jfkey" type="password" placeholder="API-Key (Jellyfin → Dashboard → API-Schlüssel)" autocomplete="off">
+      <select id="jfmode" aria-label="Scan-Umfang"><option value="partial">Nur geänderte Ordner scannen (schnell)</option><option value="full">Ganze Bibliothek scannen</option></select>
+      <input id="jfroot" placeholder="Pfad in Jellyfin, z. B. /data" autocomplete="off">
       <div class="bar"><button id="jftest">Scan jetzt testen</button><span id="jfmsg" class="sub"></span></div>
     </div>
     <div class="bar" style="margin-top:12px"><button class="primary" id="save2">Speichern</button><span id="saved2" class="sub"></span></div>
@@ -2387,7 +2422,7 @@ function lastInfo(s){$("last").textContent=s.last_run?`${fdate(s.last_run)}: ${s
 function nextList(n,err){$("cerr").textContent=err||"";$("next").innerHTML=n.map(x=>`<li>${esc(x)}</li>`).join("")}
 function tokHint(set){$("tgtok").value="";$("tgtok").placeholder=set?"Token gespeichert (leer lassen zum Behalten)":"Bot-Token (123456:ABC…)"}
 function fillSettings(s){
-  $("en").checked=s.enabled;$("cron").value=s.cron;$("mv").checked=s.move_after;$("cu").checked=s.cleanup_after;$("jf").checked=s.jellyfin!==false;$("jfs").checked=!!s.jf_scan;$("jfurl").value=s.jf_url||"";$("jfkey").value="";
+  $("en").checked=s.enabled;$("cron").value=s.cron;$("mv").checked=s.move_after;$("cu").checked=s.cleanup_after;$("jf").checked=s.jellyfin!==false;$("jfs").checked=!!s.jf_scan;$("jfmode").value=s.jf_mode||"partial";$("jfroot").value=s.jf_root||"";$("jfroot").placeholder="Zielordner aus Sicht von Jellyfin (leer = "+s.info.target+")";$("jfurl").value=s.jf_url||"";$("jfkey").value="";
   $("jfkey").placeholder=s.jf_key_set?"API-Key gespeichert (leer lassen zum Behalten)":"API-Key (Jellyfin → Dashboard → API-Schlüssel)";$("jfmsg").textContent=s.jf_last?"Zuletzt: "+s.jf_last:"";
   $("tge").checked=s.tg_enabled;$("puburl").value=s.public_url||"";$("tgchat").value=s.tg_chat;$("tgs").checked=s.tg_start;$("tgd").checked=s.tg_done;$("tgu").checked=s.tg_unclear;
   $("tgn").checked=s.tg_new;$("tgp").checked=s.tg_progress;$("tgr").checked=s.tg_errors;$("tgq").checked=s.tg_silent;
@@ -2403,7 +2438,7 @@ function fillSettings(s){
 async function loadSched(){fillSettings(await api("/api/settings"));await loadRules();drawRules()}
 let pt;$("cron").oninput=()=>{drawPresets();clearTimeout(pt);pt=setTimeout(async()=>{
   const r=await api("/api/cron?expr="+encodeURIComponent($("cron").value));nextList(r.next||[],r.error)},300)};
-const collect=()=>({enabled:$("en").checked,cron:$("cron").value,move_after:$("mv").checked,cleanup_after:$("cu").checked,jellyfin:$("jf").checked,jf_scan:$("jfs").checked,jf_url:$("jfurl").value,jf_key:$("jfkey").value,
+const collect=()=>({enabled:$("en").checked,cron:$("cron").value,move_after:$("mv").checked,cleanup_after:$("cu").checked,jellyfin:$("jf").checked,jf_scan:$("jfs").checked,jf_url:$("jfurl").value,jf_key:$("jfkey").value,jf_mode:$("jfmode").value,jf_root:$("jfroot").value,
   tg_enabled:$("tge").checked,tg_token:$("tgtok").value,tg_chat:$("tgchat").value,tg_start:$("tgs").checked,tg_done:$("tgd").checked,tg_unclear:$("tgu").checked,
   tg_new:$("tgn").checked,tg_progress:$("tgp").checked,tg_errors:$("tgr").checked,tg_silent:$("tgq").checked,public_url:$("puburl").value});
 async function saveAll(out){for(const id of["saved","saved2","tgmsg"])$(id).textContent="";try{
