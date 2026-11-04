@@ -2116,11 +2116,12 @@ function drawRules(){
 function tabs(){
   const u=unclearN();
   if(filter==="Klärung"&&!u)filter="Alle";
-  $("tabs").innerHTML=["Alle",...cats,...(u?["Klärung"]:[])].map(c=>{
+  $("tabs").hidden=!u;
+  $("tabs").innerHTML=(u?["Klärung"]:[]).map(c=>{
     const n=c==="Alle"?files.length:c==="Klärung"?u:files.filter(f=>f.category===c).length;
     const label=c==="Klärung"?"❓ Braucht dich":(ICON[c]?ICON[c]+" ":"")+c;
     return `<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":c}" ${c==="Klärung"?'data-k="1"':""}>${label} <i>${n}</i></button>`}).join("");
-  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=b.dataset.k?"Klärung":b.dataset.c;tabs();render()});
+  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=filter==="Klärung"?"Alle":"Klärung";tabs();render()});
   stats();seriesBar()}
 let fqs="";
 const hay=f=>(f.path+" "+(f.series?f.series.name+" "+f.series.orig:"")+" "+(f.target||"")).toLowerCase();
