@@ -190,6 +190,8 @@ def guess_category(rel):
     low, name = rel.lower(), Path(rel).name
     ov = get_paths().get(rel)
     if ov and ov.get("cat") in CATEGORIES: return ov["cat"]
+    g = get_mg().get(rel)
+    if g and g.get("cat") in CATEGORIES: return g["cat"]
     r = rule_for_path(rel)
     if r and r.get("category") in CATEGORIES: return r["category"]
     if re.search(r"doku|documentary|docu\b|dokumentation", low): return "Dokus"
@@ -350,8 +352,60 @@ def rule_for_path(rel):
     ep = parse_ep(rel, False, True)
     return rule_for(ep[0]) if ep else None
 
+# Eigene Gruppen (groups.json): {Quelldatei: {name, year, tmdb, cat, season, ep}} - für alles, was die Erkennung nicht oder falsch zuordnet
+_mg_cache = {"v": None}
+def get_mg():
+    if _mg_cache["v"] is None:
+        d = load("groups.json", {})
+        _mg_cache["v"] = d if isinstance(d, dict) else {}
+    return _mg_cache["v"]
+
+def set_mg(d):
+    _mg_cache["v"] = d; save("groups.json", d)
+
+def _nat(s):
+    return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", s.lower())]
+
+def mg_build(d):
+    """Eintrag pro Datei aus den Angaben des Dialogs; wirft ValueError bei ungültigen Angaben."""
+    rels = sorted(dict.fromkeys((d.get("items") or [])[:5000]), key=_nat)
+    for r in rels: safe_source(r)
+    name = _safe(_pretty((d.get("name") or "").strip()))
+    year = re.sub(r"\D", "", str(d.get("year") or ""))[:4]
+    tmdb = re.sub(r"\D", "", str(d.get("tmdb") or ""))[:10]
+    cat = d.get("category")
+    if not rels: raise ValueError("Keine Dateien ausgewählt.")
+    if not name: raise ValueError("Bitte einen Namen eingeben.")
+    if cat not in ("Serien", "Anime", "Dokus"): raise ValueError("Kategorie muss Serien, Anime oder Dokus sein.")
+    if year and not YEAR.fullmatch(year): raise ValueError("Jahr ungültig.")
+    try: season = max(0, min(99, int(d.get("season") or 1)))
+    except (TypeError, ValueError): raise ValueError("Staffel ungültig.")
+    try: start = max(0, int(d.get("start") if d.get("start") not in (None, "") else 1))
+    except (TypeError, ValueError): raise ValueError("Startnummer ungültig.")
+    eps = {}
+    if d.get("mode") == "renumber":
+        eps = {r: start + i for i, r in enumerate(rels)}
+    else:                                           # erkannte Nummern behalten, fehlende hinten anhängen
+        for r in rels:
+            e = parse_ep(r, False, True)
+            if e and e[3]: eps[r] = e[3][0]
+        nxt = max(eps.values(), default=start - 1)
+        for r in rels:
+            if r not in eps: nxt += 1; eps[r] = nxt
+    return {r: {"name": name, "year": year, "tmdb": tmdb, "cat": cat, "season": season, "ep": eps[r]} for r in rels}
+
+def mg_path(rel, cat, g):
+    show = _safe(f"{g['name']} ({g['year']})" if g.get("year") else g["name"])
+    tag = f" [tmdbid-{g['tmdb']}]" if g.get("tmdb") else ""
+    return Path(cat) / (show + tag) / f"Season {g['season']:02d}" / f"{show} S{g['season']:02d}E{g['ep']:02d}{Path(rel).suffix.lower()}"
+
 def series_info(rel):
     """Für die Oberfläche: erkannter Serienname, Schlüssel, Staffel, Folge."""
+    g = get_mg().get(rel)
+    if g:
+        return {"name": g["name"], "orig": g["name"], "year": g.get("year", ""), "rkey": "g:" + skey(g["name"]),
+                "key": "g:" + skey(g["name"]) + g.get("year", ""), "merged": False, "manual": True,
+                "season": g["season"], "ep": g["ep"], "eps": [g["ep"]]}
     ep = parse_ep(rel, False, True)
     if not ep: return None
     t, y, sn, eps = ep
@@ -407,6 +461,8 @@ def jf_target(rel, cat):
     return Path(cat) / name
 
 def default_target(rel, cat):
+    g = get_mg().get(rel)
+    if g and cat in ("Serien", "Anime", "Dokus"): return mg_path(rel, cat, g)
     return jf_target(rel, cat) if cfg()["jellyfin"] else legacy_target(rel, cat)
 
 # Eigene Zielordner (paths.json): {Quelldatei: {"folder": Zielordner, "n": ersetzte Pfadteile, "cat": Kategorie}}
@@ -698,6 +754,8 @@ def run_job(items, source="manuell"):
         moved = {it["src"].relative_to(SOURCE).as_posix() for it, _ in ok if not it["src"].exists()}
         if moved & get_paths().keys():
             set_paths({k: v for k, v in get_paths().items() if k not in moved})
+        if moved & get_mg().keys():
+            set_mg({k: v for k, v in get_mg().items() if k not in moved})
         if c["cleanup_after"]:
             removed = cleanup_leftovers()
     finally:
@@ -994,6 +1052,30 @@ def preview():
 def preview_batch():
     items = (request.get_json() or {}).get("items", [])[:5000]
     return jsonify(targets=[target_for(e["path"], e["category"]).as_posix() if e.get("category") in CATEGORIES else "" for e in items])
+
+@app.post("/api/groups/preview")
+def groups_preview():
+    d = request.get_json() or {}
+    try:
+        mg = mg_build(d)
+        order = list(dict.fromkeys((d.get("items") or [])[:5000]))
+        return jsonify(targets=[mg_path(r, d["category"], mg[r]).as_posix() for r in order], eps=[mg[r]["ep"] for r in order])
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+
+@app.post("/api/groups")
+def groups_set():
+    d = request.get_json() or {}
+    try: mg = mg_build(d)
+    except ValueError as e: return jsonify(error=str(e)), 400
+    new = dict(get_mg()); new.update(mg); set_mg(new)
+    return jsonify(ok=True, n=len(mg))
+
+@app.post("/api/groups/delete")
+def groups_delete():
+    rels = set(((request.get_json() or {}).get("items") or [])[:5000])
+    set_mg({k: v for k, v in get_mg().items() if k not in rels})
+    return jsonify(ok=True)
 
 @app.post("/api/paths/preview")
 def paths_preview():
@@ -1369,6 +1451,9 @@ tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix
 #fprev div{padding:3px 0;border-top:1px solid var(--line)}#fprev div:first-child{border-top:0}#fprev small{display:block;opacity:.65}
 .gap{font-size:13px;margin-top:4px;color:var(--warn)}.gap.ok{color:var(--ok)}.gap.ghost{color:inherit;opacity:.7}
 .fq input{flex:1 1 260px;min-width:0}
+#gprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
+#gprev div{padding:3px 0;border-top:1px solid var(--line)}#gprev div:first-child{border-top:0}#gprev small{display:block;opacity:.65}
+#gdlg select,#gdlg input{width:100%}#gdlg .field{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
 .ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
@@ -1444,14 +1529,31 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <span id="sel" class="sub"></span><span class="sub hide-m" style="margin-left:auto">💡 Shift+Klick markiert einen Bereich, Strg+A alles</span>
   </div>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
-  <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
+  <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="gbtn">👥 Neue Gruppe</button><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
   <div class="table"><table>
     <thead><tr><th style="width:40px"><input type="checkbox" id="master" aria-label="Alle"></th><th>🎞️ Datei</th><th style="width:170px">🏷️ Kategorie</th><th>📍 Wird abgelegt als</th><th>💾 Größe</th></tr></thead>
     <tbody id="rows"></tbody></table>
     <div id="empty" class="empty" hidden><div class="big">🎉</div><b>Alles sortiert</b>Im Quellordner liegt nichts mehr, was sortiert werden muss.</div></div>
 </section>
 
-<div id="ctx" class="ctx" hidden><button id="ctxedit">✏️ Ziel bearbeiten</button></div>
+<div id="ctx" class="ctx" hidden><button id="ctxgrp">👥 Neue Gruppe</button><button id="ctxdis">↩️ Gruppe auflösen</button><button id="ctxedit">✏️ Ziel bearbeiten</button></div>
+<dialog id="gdlg"><form method="dialog" id="gform">
+  <h2 style="margin:0 0 4px">👥 Neue Gruppe</h2>
+  <p class="sub" id="gdet" style="margin:0 0 12px"></p>
+  <label class="l" for="gname">Name der Serie</label>
+  <input type="text" id="gname" autocomplete="off" required>
+  <div class="field"><div><label class="l" for="gyear">Jahr (optional)</label><input type="text" id="gyear" inputmode="numeric" maxlength="4" placeholder="1996"></div>
+  <div><label class="l" for="gtmdb">TMDB-ID (optional)</label><input type="text" id="gtmdb" inputmode="numeric" placeholder="12609"></div></div>
+  <div class="field"><div><label class="l" for="gcat">Kategorie</label><select id="gcat"></select></div>
+  <div><label class="l" for="gseason">Staffel</label><input type="number" id="gseason" min="0" max="99" value="1"></div></div>
+  <label class="l" for="gmode">Folgennummern</label>
+  <div class="field"><select id="gmode"><option value="keep">Erkannte behalten, fehlende ergänzen</option><option value="renumber">Alle der Reihe nach neu zählen</option></select>
+  <div><input type="number" id="gstart" min="0" value="1" aria-label="Startnummer" title="Startnummer"></div></div>
+  <p class="sub" id="gcount" style="margin:12px 0 4px"></p>
+  <div id="gprev" class="mono"></div>
+  <p class="sub" style="margin-top:10px">Wird für genau diese Dateien gemerkt und gilt auch für den Zeitplan. Die Reihenfolge ergibt sich aus dem Dateinamen.</p>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="gcancel">Abbrechen</button><button class="primary" type="submit">Gruppe anlegen</button></div>
+</form></dialog>
 <dialog id="sdlg"><form method="dialog" id="sform">
   <h2 style="margin:0 0 4px">Serie umbenennen</h2>
   <p class="sub" id="sdet" style="margin:0 0 12px"></p>
@@ -1955,8 +2057,47 @@ $("go").onclick=async()=>{
   catch(e){$("err").textContent=e.message}};
 $("stop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
 
+/* Neue Gruppe aus Markierten (Rechtsklick oder Knopf) */
+let gFiles=[],gtm;
+function openGroup(list){
+  list=list.filter(Boolean);
+  if(!list.length){toast("Erst Dateien markieren.","bad");return}
+  gFiles=list;
+  const cnt={},cats={};list.forEach(f=>{if(f.series){cnt[f.series.name]=(cnt[f.series.name]||0)+1}if(f.category)cats[f.category]=(cats[f.category]||0)+1});
+  const top=m=>Object.entries(m).sort((a,b)=>b[1]-a[1]).map(e=>e[0])[0]||"";
+  const pre=list.map(f=>f.path.split("/").pop().replace(/\.[^.]+$/,"").replace(/[._]+/g," ")).reduce((a,b)=>{let i=0;while(i<a.length&&i<b.length&&a[i].toLowerCase()===b[i].toLowerCase())i++;return a.slice(0,i)}).replace(/[\s\-\d(\[]+$/,"").trim();
+  $("gname").value=top(cnt)||(pre.length>=3?pre:"");
+  const y=list.find(f=>f.series&&f.series.year);$("gyear").value=y?y.series.year:"";$("gtmdb").value="";
+  const serc=["Serien","Anime","Dokus"],cur=serc.includes(top(cats))?top(cats):"Serien";
+  $("gcat").innerHTML=serc.map(c=>`<option value="${c}" ${c===cur?"selected":""}>${ICON[c]} ${c}</option>`).join("");
+  const sn={};list.forEach(f=>{if(f.series)sn[f.series.season]=(sn[f.series.season]||0)+1});$("gseason").value=top(sn)||1;
+  $("gmode").value=list.every(f=>f.series)?"keep":"renumber";$("gstart").value=1;
+  $("gdet").textContent=`${list.length} Datei(en) werden zu einer Serie zusammengefasst.`;
+  $("gdlg").showModal();gprev();$("gname").focus();$("gname").select()}
+const gBody=()=>({items:gFiles.map(f=>f.path),name:$("gname").value,year:$("gyear").value,tmdb:$("gtmdb").value,category:$("gcat").value,season:$("gseason").value,mode:$("gmode").value,start:$("gstart").value});
+async function gprev(){
+  $("gstart").disabled=$("gmode").value!=="renumber";
+  const body=gBody();
+  try{const r=await api("/api/groups/preview",body);if(JSON.stringify(body)!==JSON.stringify(gBody()))return;
+    const order=[...new Set(body.items)].sort((a,b)=>0),n=gFiles.length;
+    $("gcount").innerHTML=`<b>${n} Datei(en)</b> werden so abgelegt:`;
+    $("gprev").innerHTML=r.targets.slice(0,300).map((t,i)=>`<div>${esc(body.items[i]||"")}<small>→ ${esc(t)}</small></div>`).join("")+(r.targets.length>300?`<div>… und ${r.targets.length-300} weitere</div>`:"")}
+  catch(e){$("gcount").textContent=e.message;$("gprev").innerHTML=""}}
+["gname","gyear","gtmdb","gseason","gstart"].forEach(id=>$(id).addEventListener("input",()=>{clearTimeout(gtm);gtm=setTimeout(gprev,250)}));
+["gcat","gmode"].forEach(id=>$(id).addEventListener("change",gprev));
+$("gcancel").onclick=()=>$("gdlg").close();
+$("gform").onsubmit=async ev=>{ev.preventDefault();
+  try{const r=await api("/api/groups",gBody());$("gdlg").close();await reloadKeep();toast(`Gruppe mit ${r.n} Datei(en) angelegt`,"ok")}
+  catch(e){toast(e.message,"bad")}};
+async function dissolveGroup(list){
+  const fs=list.filter(f=>f.series&&f.series.manual);
+  if(!fs.length){toast("In der Auswahl ist keine eigene Gruppe.","bad");return}
+  if(!confirm(`${fs.length} Datei(en) aus ihrer eigenen Gruppe lösen? Sie bekommen wieder den erkannten Namen.`))return;
+  try{await api("/api/groups/delete",{items:fs.map(f=>f.path)});await reloadKeep();toast("Gruppe aufgelöst","ok")}catch(e){toast(e.message,"bad")}}
+$("gbtn").onclick=()=>openGroup(visible().filter(checked));
+
 /* Rechtsklick: Ziel bearbeiten (öffnet den Zielordner-Dialog mit dem vorhandenen Pfad) */
-let ctxList=null,ctxAt=0;
+let ctxList=null,ctxAt=0,ctxGrp=[];
 const hideCtx=()=>{$("ctx").hidden=true};
 $("rows").addEventListener("contextmenu",ev=>{
   if(ev.target.closest("input,select"))return;
@@ -1964,9 +2105,14 @@ $("rows").addEventListener("contextmenu",ev=>{
   if(tr.classList.contains("grow")){const cb=tr.querySelector("input[data-g]");list=cb&&groups[cb.dataset.g]}
   else{const cb=tr.querySelector("input[data-i]");list=cb&&[files[cb.dataset.i]]}
   if(!list)return;
-  if(!list.some(f=>f.category&&f.target)){toast("Hier gibt es noch kein Ziel. Erst eine Kategorie zuordnen.","bad");ev.preventDefault();return}
   ev.preventDefault();ctxList=list;ctxAt=Date.now();
+  const marked=visible().filter(checked),base=marked.length?marked:list;ctxGrp=base;
+  $("ctxgrp").textContent=`👥 Neue Gruppe${marked.length?` aus ${marked.length} Markierten`:" aus diesen "+list.length}`;
+  $("ctxdis").hidden=!base.some(f=>f.series&&f.series.manual);
+  $("ctxedit").hidden=!list.some(f=>f.category&&f.target);
   const m=$("ctx");m.hidden=false;m.style.left=Math.max(4,Math.min(ev.clientX,innerWidth-m.offsetWidth-8))+"px";m.style.top=Math.max(4,Math.min(ev.clientY,innerHeight-m.offsetHeight-8))+"px"});
+$("ctxgrp").onclick=()=>{hideCtx();openGroup(ctxGrp)};
+$("ctxdis").onclick=()=>{hideCtx();dissolveGroup(ctxGrp)};
 $("ctxedit").onclick=()=>{hideCtx();if(ctxList)openFolder(ctxList.filter(f=>f.category&&f.target))};
 document.addEventListener("click",hideCtx);document.addEventListener("keydown",e=>{if(e.key==="Escape")hideCtx()});
 window.addEventListener("scroll",()=>{if(Date.now()-ctxAt>500)hideCtx()},true);
