@@ -1534,6 +1534,7 @@ tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix
 #gprev div{padding:3px 0;border-top:1px solid var(--line)}#gprev div:first-child{border-top:0}#gprev small{display:block;opacity:.65}
 #gdlg select,#gdlg input{width:100%}#gdlg .field{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
+.gpath{margin-top:6px;font-size:12.5px;color:var(--muted);word-break:break-all;line-height:1.35}
 .ctx button.danger{border:0;background:none}.ctx button.danger:hover:not(:disabled){background:var(--badbg)}
 .ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
@@ -1964,6 +1965,13 @@ function commonFolder(fs){
   let n=Math.min(2,...ds.map(d=>d.length));
   while(n>1&&new Set(ds.map(d=>d.slice(0,n).join("/"))).size>1)n--;
   return new Set(ds.map(d=>d[0])).size>1?"":ds[0].slice(0,n).join("/")}
+/* Zielpfad einer Gruppe für den Kopf: gemeinsamer Ordner (Kategorie/Serie), sonst Hinweis */
+function gpath(fs){
+  const t=fs.filter(f=>f.category&&f.target),u=fs.length-t.length;
+  if(!t.length)return`<div class="gpath">❓ noch kein Ziel</div>`;
+  const cats=new Set(t.map(f=>f.target.split("/")[0])),dir=cats.size>1?"":commonFolder(t);
+  const txt=cats.size>1?"verschiedene Kategorien":dir||"mehrere Ziele";
+  return`<div class="gpath mono" title="${esc(dir||txt)}">📍 ${esc(txt)}${u?` <span class="tag warn">❓ ${u} unklar</span>`:""}</div>`}
 async function fprev(){
   const folder=$("fpath").value,n=curFolder.length;
   if(!folder.trim()){$("fcount").textContent="Bitte einen Ordner eingeben, z. B. Anime/Dragonball";$("fprev").innerHTML="";return}
@@ -2064,8 +2072,8 @@ function render(){
       const open=sopen.has(e.key)||!!fqs,dir=commonFolder(fs);
       html+=`<tr class="grow sg${e.gap?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
         <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Folgen ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
-        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${new Set(fs.map(f=>f.series&&f.series.rkey).filter(Boolean)).size>1?`<button class="rn" data-split="${gi}" title="Zusammenlegung aufheben">✂️ Aufteilen</button>`:""}${dir?`<div class="sub mono" style="margin-top:4px">📍 ${esc(dir)}</div>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
-        <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select></td><td class="s"></td></tr>`
+        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${new Set(fs.map(f=>f.series&&f.series.rkey).filter(Boolean)).size>1?`<button class="rn" data-split="${gi}" title="Zusammenlegung aufheben">✂️ Aufteilen</button>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
+        <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
         +(open?fs.map(f=>row(f,false)).join(""):"")})
   }else if(grouped){
     const g=new Map();list.forEach(f=>{const k=f.path.includes("/")?f.path.split("/")[0]:"";if(!g.has(k))g.set(k,[]);g.get(k).push(f)});
@@ -2077,7 +2085,7 @@ function render(){
       const summ=Object.entries(cnt).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
       html+=`<tr class="grow fg${one&&gaps(fs).bad.length?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Ordner markieren"></td>
         <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Dateien ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📁 <b>${k?esc(k):"Lose Dateien"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div>${one?gapHtml(fs):""}</td>
-        <td class="c"><select data-g="${gi}" aria-label="Ganzen Ordner zuordnen">${catOpts("Ordner zuordnen als…")}</select></td><td class="s"></td></tr>`
+        <td class="c"><select data-g="${gi}" aria-label="Ganzen Ordner zuordnen">${catOpts("Ordner zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
         +(open?fs.map(f=>row(f,true)).join(""):"")})
   }else html=list.map(f=>row(f)).join("");
   $("rows").innerHTML=html;
