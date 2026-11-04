@@ -552,7 +552,7 @@ def _run_job(items, source, move):
                    files_total=len(items), current="", speed=0, source=source,
                    total=sum(i["src"].stat().st_size for i in items if i["src"].exists()),
                    started=time.time(), ended=0,
-                   queue=[{"name": i["dst"].as_posix(), "size": (i["src"].stat().st_size if i["src"].exists() else 0), "state": "wartet"} for i in items])
+                   queue=[{"src": i["src"].relative_to(SOURCE).as_posix(), "name": i["dst"].as_posix(), "size": (i["src"].stat().st_size if i["src"].exists() else 0), "state": "wartet"} for i in items])
     for qi, it in enumerate(items):
         if job["cancel"]: break
         src, dst, part = it["src"], TARGET / it["dst"], None
@@ -932,11 +932,12 @@ def settings_payload():
 @app.get("/api/files")
 def files():
     out, cm = [], load("copied.json", {})
+    with lock: busy_src = {q["src"] for q in job["queue"] if q["state"] in ("wartet", "kopiert") and "src" in q} if job["running"] else set()
     for p in sorted(SOURCE.rglob("*")):
         if p.is_file() and p.suffix.lower() in VIDEO_EXT and not SAMPLE.search(p.name):
             rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
             out.append({"path": rel, "size": p.stat().st_size, "category": cat, "target": target_for(rel, cat).as_posix() if cat else "",
-                        "series": series_info(rel), "copied": is_copied(cm, p, rel)})
+                        "series": series_info(rel), "copied": is_copied(cm, p, rel), "busy": rel in busy_src})
     shows = {show_dir(f["target"]) for f in out if f["series"] and f["target"]}
     return jsonify(library=library_eps(shows), files=out, categories=CATEGORIES, source=str(SOURCE), target=str(TARGET), target_mounted=TARGET.is_dir())
 
@@ -1687,7 +1688,7 @@ function stats(){const u=unclearN();
 async function loadFiles(){
   await loadRules();
   const r=await api("/api/files"),marked=new Set(files.filter(checked).map(f=>f.path));library=r.library||{};cats=r.categories;
-  const nc=r.files.filter(f=>f.copied).length;files=showCopied?r.files:r.files.filter(f=>!f.copied);
+  const nc=r.files.filter(f=>f.copied).length;files=showCopied?r.files:r.files.filter(f=>!f.copied&&!f.busy);
   $("shc").hidden=!nc;$("shcn").textContent=nc;$("shc").classList.toggle("on",showCopied);
   files.forEach(f=>{f.sel=marked.has(f.path)});
   $("src").textContent=r.source;$("tgt").textContent=r.target;
@@ -1950,7 +1951,7 @@ function setGroup(){try{localStorage.setItem("sort_grp",grouped?"1":"0");localSt
 $("grp").onclick=()=>{grouped=!grouped;if(grouped)sgrouped=false;setGroup()};
 $("sgrp").onclick=()=>{sgrouped=!sgrouped;if(sgrouped)grouped=false;setGroup()};
 $("go").onclick=async()=>{
-  try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll()}
+  try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll();reloadKeep()}
   catch(e){$("err").textContent=e.message}};
 $("stop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
 
