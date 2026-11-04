@@ -56,7 +56,9 @@ DEFAULT_CFG = {"enabled": False, "cron": "0 3 * * *", "move_after": os.environ.g
                "cleanup_after": False, "last_run": "", "last_result": "",
                "tg_enabled": False, "tg_token": "", "tg_chat": "", "tg_start": True, "tg_done": True,
                "tg_unclear": True, "tg_unclear_sig": "", "tg_new": True, "tg_progress": True,
-               "tg_errors": True, "tg_silent": True, "jellyfin": True, "public_url": os.environ.get("PUBLIC_URL", "").rstrip("/")}
+               "tg_errors": True, "tg_silent": True, "jellyfin": True,
+               "jf_scan": bool(os.environ.get("JELLYFIN_URL") and os.environ.get("JELLYFIN_API_KEY")),
+               "jf_url": os.environ.get("JELLYFIN_URL", "").rstrip("/"), "jf_key": os.environ.get("JELLYFIN_API_KEY", ""), "jf_last": "", "public_url": os.environ.get("PUBLIC_URL", "").rstrip("/")}
 _mem, _flock = {}, threading.Lock()
 
 def load(name, default):
@@ -751,6 +753,7 @@ def run_job(items, source="manuell"):
             notify(f"▶️ Media Sorter: Kopieren gestartet ({source})\n{len(items)} Datei(en), {hsize(size)}\n"
                    + " · ".join(f"{k} {v}" for k, v in cats.items()), "tg_start")
         ok = _run_job(items, source, c["move_after"])
+        if ok: _scan_due[0] = True
         moved = {it["src"].relative_to(SOURCE).as_posix() for it, _ in ok if not it["src"].exists()}
         if moved & get_paths().keys():
             set_paths({k: v for k, v in get_paths().items() if k not in moved})
@@ -786,6 +789,29 @@ def run_job(items, source="manuell"):
 # Warteschlange: Aufträge (UI, Zeitplan) laufen nacheinander; neue werden hinten angestellt, statt abgelehnt zu werden.
 qcv = threading.Condition()
 pending, qstate, _qid, _qworker = [], {"active": None}, [0], []
+_scan_due = [False]
+
+def jf_refresh(url, key):
+    """Jellyfin: Bibliotheks-Scan anstoßen (POST /Library/Refresh, braucht API-Key). -> (ok, Text)"""
+    url = (url or "").strip().rstrip("/")
+    if not url or not key: return False, "Jellyfin-Adresse oder API-Key fehlt."
+    try:
+        req = urllib.request.Request(url + "/Library/Refresh", data=b"", method="POST",
+                                     headers={"X-Emby-Token": key, "Authorization": f'MediaBrowser Token="{key}"'})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return True, f"Scan gestartet (HTTP {r.status})"
+    except urllib.error.HTTPError as e:
+        return False, "API-Key ungültig (HTTP 401)" if e.code == 401 else f"HTTP {e.code}"
+    except Exception as e:
+        return False, f"nicht erreichbar: {e}"
+
+def jf_after_queue():
+    c = cfg()
+    if not (c["jf_scan"] and _scan_due[0]): _scan_due[0] = False; return
+    _scan_due[0] = False
+    ok, msg = jf_refresh(c["jf_url"], c["jf_key"])
+    save_cfg(jf_last=f"{datetime.now():%Y-%m-%d %H:%M:%S}: {msg}")
+    if not ok: notify(f"⚠️ Media Sorter: Jellyfin-Scan fehlgeschlagen – {msg}", "tg_errors")
 
 def enqueue(items, source):
     """-> (neue Dateien, musste warten). Dateien, die schon laufen oder warten, werden nicht doppelt aufgenommen."""
@@ -818,6 +844,10 @@ def queue_worker():
             with qcv:
                 if b in pending: pending.remove(b)
                 qstate["active"] = None
+                idle = not pending
+            if idle:
+                try: jf_after_queue()
+                except Exception as e: print("Jellyfin-Scan:", e, file=sys.stderr)
 
 def waiting_batches():
     with qcv: return [b for b in pending if b is not qstate["active"]]
@@ -1019,8 +1049,8 @@ def settings_payload():
     c = cfg()
     try: nxt, err = [fmt_dt(t) for t in next_runs(c["cron"])], ""
     except ValueError as e: nxt, err = [], str(e)
-    tok = c.pop("tg_token"); c.pop("tg_unclear_sig")
-    return {**c, "tg_token_set": bool(tok), "next": nxt, "error": err,
+    tok = c.pop("tg_token"); c.pop("tg_unclear_sig"); jk = c.pop("jf_key")
+    return {**c, "tg_token_set": bool(tok), "jf_key_set": bool(jk), "next": nxt, "error": err,
             "tz": datetime.now().astimezone().tzname(), "persist": PERSIST,
             "info": {"source": str(SOURCE), "target": str(TARGET), "data": str(DATA), "min_age": MIN_AGE,
                      "auth": bool(AUTH_PASS), "ffprobe": bool(shutil.which("ffprobe")), "watch": WATCH_INTERVAL}}
@@ -1302,7 +1332,12 @@ def settings_set():
     url = str(d.get("public_url", "")).strip().rstrip("/")
     if url and not re.match(r"^https?://\S+$", url):
         return jsonify(error="Web-UI-Adresse muss mit http:// oder https:// beginnen."), 400
-    save_cfg(enabled=bool(d.get("enabled")), cron=" ".join(d["cron"].split()),
+    jurl = str(d.get("jf_url", "")).strip().rstrip("/")
+    jkey = str(d.get("jf_key", "")).strip() or old["jf_key"]
+    if d.get("jf_scan") and not (re.match(r"^https?://\S+$", jurl) and jkey):
+        return jsonify(error="Jellyfin: Adresse (http://…) und API-Key eintragen."), 400
+    save_cfg(jf_scan=bool(d.get("jf_scan")), jf_url=jurl, jf_key=jkey,
+             enabled=bool(d.get("enabled")), cron=" ".join(d["cron"].split()),
              move_after=bool(d.get("move_after")), cleanup_after=bool(d.get("cleanup_after")),
              tg_enabled=bool(d.get("tg_enabled")), tg_token=tok, tg_chat=chat,
              tg_start=bool(d.get("tg_start")), tg_done=bool(d.get("tg_done")), tg_unclear=bool(d.get("tg_unclear")), public_url=url,
@@ -1310,6 +1345,12 @@ def settings_set():
              tg_errors=bool(d.get("tg_errors", old["tg_errors"])), tg_silent=bool(d.get("tg_silent", old["tg_silent"])),
              jellyfin=bool(d.get("jellyfin", old["jellyfin"])))
     return jsonify(settings_payload())
+
+@app.post("/api/jellyfin/test")
+def jellyfin_test():
+    d = request.get_json() or {}
+    ok, msg = jf_refresh(str(d.get("url", "")) or cfg()["jf_url"], str(d.get("key", "")).strip() or cfg()["jf_key"])
+    return jsonify(ok=ok, msg=msg)
 
 @app.post("/api/telegram/test")
 def telegram_test():
@@ -1789,6 +1830,12 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <label class="opt"><input type="checkbox" id="mv"><span><b>Quelle nach dem Kopieren löschen</b><small>Dateien werden verschoben statt kopiert.</small></span></label>
     <label class="opt"><input type="checkbox" id="cu"><span><b>Reste danach aufräumen</b><small>Ordner ohne Medien werden automatisch gelöscht.</small></span></label>
     <label class="opt"><input type="checkbox" id="jf"><span><b>Jellyfin-Benennung</b><small>Ordner und Dateien werden umbenannt: „Titel (Jahr)“ bzw. „Serie/Season 01/Serie S01E02“. Aus: Originalnamen bleiben.</small></span></label>
+    <label class="opt"><input type="checkbox" id="jfs"><span><b>Jellyfin-Bibliothek nach der Warteschlange scannen</b><small>Sobald alle Aufträge durch sind und etwas kopiert wurde, wird einmal ein Scan ausgelöst.</small></span></label>
+    <div id="jfbox" style="margin:6px 0 0 30px;display:grid;gap:8px">
+      <input id="jfurl" placeholder="http://jellyfin:8096" autocomplete="off">
+      <input id="jfkey" type="password" placeholder="API-Key (Jellyfin → Dashboard → API-Schlüssel)" autocomplete="off">
+      <div class="bar"><button id="jftest">Scan jetzt testen</button><span id="jfmsg" class="sub"></span></div>
+    </div>
     <div class="bar" style="margin-top:12px"><button class="primary" id="save2">Speichern</button><span id="saved2" class="sub"></span></div>
   </div>
   <div class="card">
@@ -2340,7 +2387,8 @@ function lastInfo(s){$("last").textContent=s.last_run?`${fdate(s.last_run)}: ${s
 function nextList(n,err){$("cerr").textContent=err||"";$("next").innerHTML=n.map(x=>`<li>${esc(x)}</li>`).join("")}
 function tokHint(set){$("tgtok").value="";$("tgtok").placeholder=set?"Token gespeichert (leer lassen zum Behalten)":"Bot-Token (123456:ABC…)"}
 function fillSettings(s){
-  $("en").checked=s.enabled;$("cron").value=s.cron;$("mv").checked=s.move_after;$("cu").checked=s.cleanup_after;$("jf").checked=s.jellyfin!==false;
+  $("en").checked=s.enabled;$("cron").value=s.cron;$("mv").checked=s.move_after;$("cu").checked=s.cleanup_after;$("jf").checked=s.jellyfin!==false;$("jfs").checked=!!s.jf_scan;$("jfurl").value=s.jf_url||"";$("jfkey").value="";
+  $("jfkey").placeholder=s.jf_key_set?"API-Key gespeichert (leer lassen zum Behalten)":"API-Key (Jellyfin → Dashboard → API-Schlüssel)";$("jfmsg").textContent=s.jf_last?"Zuletzt: "+s.jf_last:"";
   $("tge").checked=s.tg_enabled;$("puburl").value=s.public_url||"";$("tgchat").value=s.tg_chat;$("tgs").checked=s.tg_start;$("tgd").checked=s.tg_done;$("tgu").checked=s.tg_unclear;
   $("tgn").checked=s.tg_new;$("tgp").checked=s.tg_progress;$("tgr").checked=s.tg_errors;$("tgq").checked=s.tg_silent;
   tokHint(s.tg_token_set);drawPresets();
@@ -2355,7 +2403,7 @@ function fillSettings(s){
 async function loadSched(){fillSettings(await api("/api/settings"));await loadRules();drawRules()}
 let pt;$("cron").oninput=()=>{drawPresets();clearTimeout(pt);pt=setTimeout(async()=>{
   const r=await api("/api/cron?expr="+encodeURIComponent($("cron").value));nextList(r.next||[],r.error)},300)};
-const collect=()=>({enabled:$("en").checked,cron:$("cron").value,move_after:$("mv").checked,cleanup_after:$("cu").checked,jellyfin:$("jf").checked,
+const collect=()=>({enabled:$("en").checked,cron:$("cron").value,move_after:$("mv").checked,cleanup_after:$("cu").checked,jellyfin:$("jf").checked,jf_scan:$("jfs").checked,jf_url:$("jfurl").value,jf_key:$("jfkey").value,
   tg_enabled:$("tge").checked,tg_token:$("tgtok").value,tg_chat:$("tgchat").value,tg_start:$("tgs").checked,tg_done:$("tgd").checked,tg_unclear:$("tgu").checked,
   tg_new:$("tgn").checked,tg_progress:$("tgp").checked,tg_errors:$("tgr").checked,tg_silent:$("tgq").checked,public_url:$("puburl").value});
 async function saveAll(out){for(const id of["saved","saved2","tgmsg"])$(id).textContent="";try{
@@ -2365,6 +2413,8 @@ $("save").onclick=()=>saveAll($("saved"));$("save2").onclick=()=>saveAll($("save
 async function sendTest(urgent){$("tgmsg").textContent="Sende…";
   try{await api("/api/telegram/test",{token:$("tgtok").value,chat:$("tgchat").value,urgent});$("tgmsg").textContent="";toast(urgent?"Dringender Test gesendet":"Test gesendet","ok")}
   catch(e){$("tgmsg").textContent="";toast("Telegram: "+e.message,"bad")}}
+$("jftest").onclick=async()=>{$("jfmsg").textContent="…";try{const r=await api("/api/jellyfin/test",{url:$("jfurl").value,key:$("jfkey").value});
+  $("jfmsg").textContent=(r.ok?"✅ ":"⛔ ")+r.msg}catch(e){$("jfmsg").textContent="⛔ "+e.message}};
 $("tgtest").onclick=()=>sendTest(false);$("tgtest2").onclick=()=>sendTest(true);
 $("runnow").onclick=async()=>{try{const r=await api("/api/run",{});$("runmsg").textContent=r.info;poll()}catch(e){$("runmsg").textContent=e.message}};
 
