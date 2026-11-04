@@ -1159,6 +1159,31 @@ def start():
     if not n: return jsonify(error="Diese Dateien laufen schon oder warten bereits in der Warteschlange."), 409
     return jsonify(ok=True, queued=waits, n=n, position=len(waiting_batches()))
 
+@app.post("/api/files/delete")
+def files_delete():
+    """Löscht Quelldateien (nur Videos im Quellordner). Dateien, die gerade laufen oder warten, bleiben unangetastet."""
+    rels = list(dict.fromkeys(((request.get_json() or {}).get("items") or [])[:5000]))
+    with lock:
+        busy_rel = {q["src"] for q in job["queue"] if q["state"] in ("wartet", "kopiert") and "src" in q} if job["running"] else set()
+    with qcv: busy_rel |= {it["src"].relative_to(SOURCE).as_posix() for b in pending for it in b["items"]}
+    gone, skipped, errors = [], [], []
+    for r in rels:
+        try:
+            p = safe_source(r)
+            if p.suffix.lower() not in VIDEO_EXT: raise ValueError(f"Keine Videodatei: {r}")
+            if r in busy_rel: skipped.append(r); continue
+            p.unlink(); gone.append(r)
+        except (ValueError, OSError) as e:
+            errors.append(f"{r}: {e}")
+    if gone:
+        g = set(gone)
+        for name, getter, setter in (("paths", get_paths, set_paths), ("groups", get_mg, set_mg)):
+            if g & getter().keys(): setter({k: v for k, v in getter().items() if k not in g})
+        cm = load("copied.json", {})
+        if g & cm.keys(): save("copied.json", {k: v for k, v in cm.items() if k not in g})
+        for r in gone: print("Quelldatei gelöscht:", r, file=sys.stderr)
+    return jsonify(ok=True, deleted=len(gone), skipped=len(skipped), errors=errors)
+
 @app.post("/api/queue/remove")
 def queue_remove():
     bid = (request.get_json() or {}).get("id")
@@ -1509,6 +1534,7 @@ tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix
 #gprev div{padding:3px 0;border-top:1px solid var(--line)}#gprev div:first-child{border-top:0}#gprev small{display:block;opacity:.65}
 #gdlg select,#gdlg input{width:100%}#gdlg .field{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
+.ctx button.danger{border:0;background:none}.ctx button.danger:hover:not(:disabled){background:var(--badbg)}
 .ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
 .badge.live{background:var(--ok);color:#fff;animation:pulse 1.4s ease-in-out infinite}.nav .on .badge.live{background:var(--ok);color:#fff}
@@ -1583,14 +1609,14 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <span id="sel" class="sub"></span><span class="sub hide-m" style="margin-left:auto">💡 Shift+Klick markiert einen Bereich, Strg+A alles</span>
   </div>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
-  <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="gbtn">👥 Neue Gruppe</button><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
+  <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="gbtn">👥 Neue Gruppe</button><button id="dbtn" class="danger">🗑️ Löschen</button><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
   <div class="table"><table>
     <thead><tr><th style="width:40px"><input type="checkbox" id="master" aria-label="Alle"></th><th>🎞️ Datei</th><th style="width:170px">🏷️ Kategorie</th><th>📍 Wird abgelegt als</th><th>💾 Größe</th></tr></thead>
     <tbody id="rows"></tbody></table>
     <div id="empty" class="empty" hidden><div class="big">🎉</div><b>Alles sortiert</b>Im Quellordner liegt nichts mehr, was sortiert werden muss.</div></div>
 </section>
 
-<div id="ctx" class="ctx" hidden><button id="ctxgrp">👥 Neue Gruppe</button><button id="ctxdis">↩️ Gruppe auflösen</button><button id="ctxedit">✏️ Ziel bearbeiten</button></div>
+<div id="ctx" class="ctx" hidden><button id="ctxgrp">👥 Neue Gruppe</button><button id="ctxdis">↩️ Gruppe auflösen</button><button id="ctxedit">✏️ Ziel bearbeiten</button><button id="ctxdel" class="danger">🗑️ Löschen</button></div>
 <dialog id="gdlg"><form method="dialog" id="gform">
   <h2 style="margin:0 0 4px">👥 Neue Gruppe</h2>
   <p class="sub" id="gdet" style="margin:0 0 12px"></p>
@@ -2153,6 +2179,15 @@ async function dissolveGroup(list){
   if(!confirm(`${fs.length} Datei(en) aus ihrer eigenen Gruppe lösen? Sie bekommen wieder den erkannten Namen.`))return;
   try{await api("/api/groups/delete",{items:fs.map(f=>f.path)});await reloadKeep();toast("Gruppe aufgelöst","ok")}catch(e){toast(e.message,"bad")}}
 $("gbtn").onclick=()=>openGroup(visible().filter(checked));
+async function deleteFiles(list){
+  list=list.filter(Boolean);if(!list.length){toast("Erst Dateien markieren.","bad");return}
+  const names=list.slice(0,8).map(f=>"• "+f.path).join("\n")+(list.length>8?`\n… und ${list.length-8} weitere`:"");
+  if(!confirm(`${list.length} Datei(en) (${fmt(list.reduce((a,f)=>a+f.size,0))}) aus dem Quellordner endgültig löschen?\n\n${names}\n\nDas lässt sich nicht rückgängig machen.`))return;
+  try{const r=await api("/api/files/delete",{items:list.map(f=>f.path)});await reloadKeep();
+    toast(`${r.deleted} Datei(en) gelöscht`+(r.skipped?`, ${r.skipped} übersprungen (laufen gerade)`:"")+(r.errors.length?`, ${r.errors.length} Fehler`:""),r.errors.length?"bad":"ok");
+    if(r.errors.length)$("err").textContent=r.errors.join("\n")}
+  catch(e){toast(e.message,"bad")}}
+$("dbtn").onclick=()=>deleteFiles(visible().filter(checked));
 
 /* Rechtsklick: Ziel bearbeiten (öffnet den Zielordner-Dialog mit dem vorhandenen Pfad) */
 let ctxList=null,ctxAt=0,ctxGrp=[];
@@ -2167,9 +2202,11 @@ $("rows").addEventListener("contextmenu",ev=>{
   const marked=visible().filter(checked),base=marked.length?marked:list;ctxGrp=base;
   $("ctxgrp").textContent=`👥 Neue Gruppe${marked.length?` aus ${marked.length} Markierten`:" aus diesen "+list.length}`;
   $("ctxdis").hidden=!base.some(f=>f.series&&f.series.manual);
+  $("ctxdel").textContent=`🗑️ Löschen (${base.length})`;
   $("ctxedit").hidden=!list.some(f=>f.category&&f.target);
   const m=$("ctx");m.hidden=false;m.style.left=Math.max(4,Math.min(ev.clientX,innerWidth-m.offsetWidth-8))+"px";m.style.top=Math.max(4,Math.min(ev.clientY,innerHeight-m.offsetHeight-8))+"px"});
 $("ctxgrp").onclick=()=>{hideCtx();openGroup(ctxGrp)};
+$("ctxdel").onclick=()=>{hideCtx();deleteFiles(ctxGrp)};
 $("ctxdis").onclick=()=>{hideCtx();dissolveGroup(ctxGrp)};
 $("ctxedit").onclick=()=>{hideCtx();if(ctxList)openFolder(ctxList.filter(f=>f.category&&f.target))};
 document.addEventListener("click",hideCtx);document.addEventListener("keydown",e=>{if(e.key==="Escape")hideCtx()});
