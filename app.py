@@ -1367,6 +1367,7 @@ tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix
 #fprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
 #fprev div{padding:3px 0;border-top:1px solid var(--line)}#fprev div:first-child{border-top:0}#fprev small{display:block;opacity:.65}
 .gap{font-size:13px;margin-top:4px;color:var(--warn)}.gap.ok{color:var(--ok)}.gap.ghost{color:inherit;opacity:.7}
+.fq input{flex:1 1 260px;min-width:0}
 .ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
 .ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
@@ -1435,10 +1436,11 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div class="bar">
     <div class="chips" id="tabs"></div>
   </div>
+  <div class="bar fq"><input type="search" id="fq" placeholder="🔍 Suchen: Dateiname, Serie oder Pfad" autocomplete="off" aria-label="Dateien suchen"><button id="fmark" hidden>☑️ Treffer markieren</button><span id="fqn" class="sub"></span></div>
   <div class="bar tools">
-    <button id="reload">↻ Neu laden</button><button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button>
+    <button id="reload">↻ Neu laden</button><button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button><button id="inv" title="Auswahl der sichtbaren Dateien umdrehen">🔁 Umkehren</button>
     <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button><button id="shc" class="toggle" hidden>✅ Schon kopierte zeigen (<span id="shcn">0</span>)</button>
-    <span id="sel" class="sub"></span>
+    <span id="sel" class="sub"></span><span class="sub hide-m" style="margin-left:auto">💡 Shift+Klick markiert einen Bereich, Strg+A alles</span>
   </div>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
   <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
@@ -1676,7 +1678,7 @@ $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 
 /* Sortieren */
 const unclearN=()=>files.filter(f=>!f.category).length;
-let showCopied=false;
+let showCopied=false,emptyHtml="";const lastRow={v:null},lastGrp={v:null};
 const checked=f=>f.sel===true;
 let grouped=false,sgrouped=true,groups=[],sgroups=[],sopen=new Set(["","d:"]);try{grouped=localStorage.getItem("sort_grp")==="1";const sg=localStorage.getItem("sort_sgrp");sgrouped=sg===null?!grouped:sg==="1";if(sgrouped)grouped=false}catch{}
 function stats(){const u=unclearN();
@@ -1843,7 +1845,9 @@ function tabs(){
     return `<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":c}" ${c==="Klärung"?'data-k="1"':""}>${label} <i>${n}</i></button>`}).join("");
   $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=b.dataset.k?"Klärung":b.dataset.c;tabs();render()});
   stats();seriesBar()}
-const visible=()=>files.filter(f=>filter==="Alle"||(filter==="Klärung"?!f.category:f.category===filter));
+let fqs="";
+const hay=f=>(f.path+" "+(f.series?f.series.name+" "+f.series.orig:"")+" "+(f.target||"")).toLowerCase();
+const visible=()=>files.filter(f=>(filter==="Alle"||(filter==="Klärung"?!f.category:f.category===filter))&&(!fqs||fqs.every(w=>hay(f).includes(w))));
 const catOpts=(first)=>`<option value="">${first}</option>`+cats.map(c=>`<option value="${c}">${ICON[c]} ${c}</option>`).join("");
 function row(f,short,extra="",cls=""){const i=files.indexOf(f),name=short&&f.path.includes("/")?f.path.slice(f.path.indexOf("/")+1):f.path;return `<tr class="${cls}" data-cat="${esc(f.category)}">
    <td class="chk"><input type="checkbox" data-i="${i}" ${checked(f)?"checked":""} aria-label="markieren"></td>
@@ -1855,6 +1859,9 @@ function refreshGroups(){
     c.checked=fs.every(checked);c.indeterminate=fs.some(checked)&&!fs.every(checked)})}
 function render(){
   const list=visible();
+  if(!emptyHtml)emptyHtml=$("empty").innerHTML;
+  $("empty").innerHTML=!list.length&&fqs?'<div class="big">🔍</div><b>Keine Treffer</b>Für diese Suche passt keine Datei.':emptyHtml;
+  $("fmark").hidden=!fqs||!list.length;$("fqn").textContent=fqs?`${list.length} Treffer`:"";
   $("empty").hidden=list.length>0;$("rows").classList.toggle("grouped",grouped);
   let html="";groups=[];sgroups=[];
   $("rows").classList.toggle("grouped",grouped||sgrouped);
@@ -1867,7 +1874,7 @@ function render(){
       if(fs.length===1){html+=row(fs[0],false,e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>${gapHtml(fs)}`:"",`solo${e.gap?" hasgap":""}`);return}
       const nm=Object.entries(e.names).sort((a,b)=>b[1]-a[1])[0];
       const summ=Object.entries(e.cats).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
-      const open=sopen.has(e.key),dir=commonFolder(fs);
+      const open=sopen.has(e.key)||!!fqs,dir=commonFolder(fs);
       html+=`<tr class="grow sg${e.gap?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
         <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Folgen ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
         ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${new Set(fs.map(f=>f.series&&f.series.rkey).filter(Boolean)).size>1?`<button class="rn" data-split="${gi}" title="Zusammenlegung aufheben">✂️ Aufteilen</button>`:""}${dir?`<div class="sub mono" style="margin-top:4px">📍 ${esc(dir)}</div>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
@@ -1876,7 +1883,7 @@ function render(){
   }else if(grouped){
     const g=new Map();list.forEach(f=>{const k=f.path.includes("/")?f.path.split("/")[0]:"";if(!g.has(k))g.set(k,[]);g.get(k).push(f)});
     [...g.keys()].sort((a,b)=>(a===""?1:0)-(b===""?1:0)||a.localeCompare(b)).forEach(k=>{
-      const fs=g.get(k),gi=groups.push(fs)-1,cnt={},key="d:"+k,open=sopen.has(key);sgroups[gi]={key};
+      const fs=g.get(k),gi=groups.push(fs)-1,cnt={},key="d:"+k,open=sopen.has(key)||!!fqs;sgroups[gi]={key};
       if(fs.length===1){const gp=fs[0].series?gaps(fs).bad.length:0;html+=row(fs[0],false,fs[0].series?gapHtml(fs):"",`solo${gp?" hasgap":""}`);return}
       const sks=new Set(fs.map(f=>f.series?f.series.key:"")),one=sks.size===1&&!sks.has("");
       fs.forEach(f=>{const c=f.category||"?";cnt[c]=(cnt[c]||0)+1});
@@ -1888,6 +1895,13 @@ function render(){
   }else html=list.map(f=>row(f)).join("");
   $("rows").innerHTML=html;
   $("rows").querySelectorAll("input[data-i]").forEach(c=>c.onchange=()=>{files[c.dataset.i].sel=c.checked;count();refreshGroups()});
+  const rangeSel=(sel,last)=>$("rows").querySelectorAll(sel).forEach(c=>c.addEventListener("click",ev=>{
+    const all=[...$("rows").querySelectorAll(sel)],i=all.indexOf(c),j=last.v;
+    if(ev.shiftKey&&j!==null&&j!==i&&all[j]){const [a,b]=[Math.min(i,j),Math.max(i,j)];
+      all.slice(a,b+1).forEach(x=>{(sel==="input[data-i]"?[files[x.dataset.i]]:groups[x.dataset.g]).forEach(f=>f.sel=c.checked)});
+      last.v=i;setTimeout(render,0);return}
+    last.v=i}));
+  rangeSel("input[data-i]",lastRow);rangeSel("input[data-g]",lastGrp);
   $("rows").querySelectorAll("input[data-g]").forEach(c=>c.onchange=()=>{groups[c.dataset.g].forEach(f=>f.sel=c.checked);render()});
   $("rows").querySelectorAll("select[data-i]").forEach(s=>s.onchange=()=>assign([files[s.dataset.i]],s.value));
   $("rows").querySelectorAll("select[data-g]").forEach(s=>s.onchange=()=>assign(groups[s.dataset.g],s.value));
@@ -1924,6 +1938,12 @@ $("reload").onclick=loadFiles;
 $("shc").onclick=()=>{showCopied=!showCopied;loadFiles()};
 $("all").onclick=()=>{visible().forEach(f=>f.sel=true);render()};
 $("none").onclick=()=>{visible().forEach(f=>f.sel=false);render()};
+$("inv").onclick=()=>{visible().forEach(f=>f.sel=!f.sel);render()};
+let fqt;$("fq").addEventListener("input",()=>{clearTimeout(fqt);fqt=setTimeout(()=>{fqs=$("fq").value.toLowerCase().split(/\s+/).filter(Boolean);if(!fqs.length)fqs="";render()},150)});
+$("fmark").onclick=()=>{visible().forEach(f=>f.sel=true);render();toast(`${visible().length} Treffer markiert`,"ok")};
+document.addEventListener("keydown",e=>{
+  if(view!=="sort"||dlgOpen()||e.target.closest("input,select,textarea"))return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="a"){e.preventDefault();visible().forEach(f=>f.sel=true);render()}});
 $("master").onchange=e=>{visible().forEach(f=>f.sel=e.target.checked);render()};
 function setGroup(){try{localStorage.setItem("sort_grp",grouped?"1":"0");localStorage.setItem("sort_sgrp",sgrouped?"1":"0")}catch{}
   $("grp").classList.toggle("on",grouped);$("sgrp").classList.toggle("on",sgrouped);render()}
