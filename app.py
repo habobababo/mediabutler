@@ -783,17 +783,55 @@ def run_job(items, source="manuell"):
         else:
             notify(txt, "tg_done", wait=True)
 
+# Warteschlange: Aufträge (UI, Zeitplan) laufen nacheinander; neue werden hinten angestellt, statt abgelehnt zu werden.
+qcv = threading.Condition()
+pending, qstate, _qid, _qworker = [], {"active": None}, [0], []
+
+def enqueue(items, source):
+    """-> (neue Dateien, musste warten). Dateien, die schon laufen oder warten, werden nicht doppelt aufgenommen."""
+    with qcv:
+        have = {it["src"] for b in pending for it in b["items"]}
+        with lock:
+            if job["running"]: have |= {SOURCE / q["src"] for q in job["queue"] if q["state"] in ("wartet", "kopiert") and "src" in q}
+        new = [it for it in items if it["src"] not in have]
+        if not new: return 0, False
+        waits = job["running"] or bool(pending)
+        _qid[0] += 1
+        pending.append({"id": _qid[0], "source": source, "items": new, "t": time.time(),
+                        "size": sum(i["src"].stat().st_size for i in new if i["src"].exists())})
+        if not _qworker:
+            _qworker.append(threading.Thread(target=queue_worker, daemon=True)); _qworker[0].start()
+        qcv.notify_all()
+        return len(new), waits
+
+def queue_worker():
+    while True:
+        with qcv:
+            while not pending: qcv.wait()
+            b = pending[0]; qstate["active"] = b
+        try:
+            while busy(): time.sleep(2)             # ein anderer Prozess (z. B. CLI) hält die Sperre
+            run_job(b["items"], b["source"])
+        except Exception as e:
+            print("Warteschlange:", e, file=sys.stderr)
+        finally:
+            with qcv:
+                if b in pending: pending.remove(b)
+                qstate["active"] = None
+
+def waiting_batches():
+    with qcv: return [b for b in pending if b is not qstate["active"]]
+
 def trigger(source):
-    if job["running"] or busy():
-        return False, "Es läuft bereits ein Kopiervorgang."
     if not TARGET.is_dir():
         alert_once("target", True, f"🚨 Handlungsbedarf – Media Sorter\nDas Ziel {TARGET} ist nicht erreichbar. Ist das NFS-Share eingebunden? Bis dahin wird nichts kopiert.",
                    "✅ Media Sorter: Das Ziel ist wieder erreichbar.")
         return False, f"Ziel {TARGET} nicht erreichbar (NFS gemountet?)"
     items, unclear = scan()
     unclear_notice(unclear)
-    threading.Thread(target=run_job, args=(items, source), daemon=True).start()
-    msg = f"{len(items)} Datei(en) in der Warteschlange"
+    n, waits = enqueue(items, source)
+    if not n and items: return False, "Alle fertigen Dateien laufen schon oder warten bereits."
+    msg = f"{n} Datei(en) in der Warteschlange" + (" (nach dem laufenden Vorgang)" if waits else "")
     if unclear: msg += f", {len(unclear)} zur Klärung übersprungen"
     return True, msg
 
@@ -991,6 +1029,7 @@ def settings_payload():
 def files():
     out, cm = [], load("copied.json", {})
     with lock: busy_src = {q["src"] for q in job["queue"] if q["state"] in ("wartet", "kopiert") and "src" in q} if job["running"] else set()
+    with qcv: busy_src |= {it["src"].relative_to(SOURCE).as_posix() for b in pending for it in b["items"]}
     for p in sorted(SOURCE.rglob("*")):
         if p.is_file() and p.suffix.lower() in VIDEO_EXT and not SAMPLE.search(p.name):
             rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
@@ -1107,7 +1146,6 @@ def paths_set():
 
 @app.post("/api/start")
 def start():
-    if job["running"] or busy(): return jsonify(error="Es läuft bereits ein Job."), 409
     if not TARGET.is_dir(): return jsonify(error=f"Ziel {TARGET} nicht erreichbar (NFS gemountet?)"), 400
     items = []
     try:
@@ -1117,7 +1155,21 @@ def start():
     except Exception as e:
         return jsonify(error=str(e)), 400
     if not items: return jsonify(error="Nichts ausgewählt."), 400
-    threading.Thread(target=run_job, args=(items, "manuell"), daemon=True).start()
+    n, waits = enqueue(items, "manuell")
+    if not n: return jsonify(error="Diese Dateien laufen schon oder warten bereits in der Warteschlange."), 409
+    return jsonify(ok=True, queued=waits, n=n, position=len(waiting_batches()))
+
+@app.post("/api/queue/remove")
+def queue_remove():
+    bid = (request.get_json() or {}).get("id")
+    with qcv:
+        pending[:] = [b for b in pending if b["id"] != bid or b is qstate["active"]]
+    return jsonify(ok=True)
+
+@app.post("/api/queue/clear")
+def queue_clear():
+    with qcv:
+        pending[:] = [b for b in pending if b is qstate["active"]]
     return jsonify(ok=True)
 
 @app.post("/api/run")
@@ -1133,6 +1185,8 @@ def status():
         for q in job["queue"]: j["counts"][q["state"]] = j["counts"].get(q["state"], 0) + 1
     j["elapsed"] = (time.time() if j["running"] else (j["ended"] or time.time())) - j["started"] if j["started"] else 0
     j["schedule"] = schedule_info()
+    with qcv: j["batches"] = len(pending)
+    j["waiting"] = [{"id": b["id"], "source": b["source"], "files": len(b["items"]), "size": b["size"]} for b in waiting_batches()]
     return jsonify(j)
 
 @app.get("/api/job/queue")
@@ -1606,6 +1660,10 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div id="ridle" class="empty" style="padding:18px 0 4px"><div class="big">💤</div><span id="ridle-txt">Wenn kopiert wird, siehst du es hier live.</span>
       <div class="bar" style="justify-content:center;margin:14px 0 0"><button id="rtosort">📥 Zu Sortieren</button></div></div>
   </div>
+  <div class="card rcard" id="rwaitcard" hidden>
+    <header><span class="ico">⏳</span><div><h2>Warteschlange</h2><p class="sub" id="rwaitsub"></p></div><button class="danger" id="rwaitclear" style="margin-left:auto">🗑️ Leeren</button></header>
+    <div id="rwait"></div>
+  </div>
   <div class="card rcard" id="ranacard" hidden>
     <header><span class="ico">📊</span><div><h2>Codec-Analyse läuft</h2><p class="sub" id="ranatxt"></p></div></header>
     <div class="prog run"><i id="ranabar"></i></div>
@@ -2027,8 +2085,8 @@ async function assign(list,cat){
   tabs();render()}
 const selected=()=>files.filter(f=>f.category&&f.sel===true);
 function updateGo(){const s=selected();
-  $("go").disabled=running||!s.length;
-  $("go").textContent=running?"Läuft…":s.length?`▶ ${s.length} ${s.length===1?"Datei":"Dateien"} kopieren (${fmt(s.reduce((a,f)=>a+f.size,0))})`:"Nichts ausgewählt"}
+  $("go").disabled=!s.length;
+  $("go").textContent=s.length?`${running?"➕ einreihen":"▶ kopieren"}: ${s.length} ${s.length===1?"Datei":"Dateien"} (${fmt(s.reduce((a,f)=>a+f.size,0))})`:"Nichts ausgewählt"}
 function mergeCandidates(){const m=new Map();files.filter(checked).forEach(f=>{if(f.series)m.set(f.series.key,(m.get(f.series.key)||[]).concat(f))});return m}
 $("merge").onclick=()=>{const m=mergeCandidates(),fs=[...m.values()].flat(),names={},cats={};
   fs.forEach(f=>{names[f.series.name]=(names[f.series.name]||0)+1;const c=f.category||"?";cats[c]=(cats[c]||0)+1});
@@ -2053,7 +2111,7 @@ function setGroup(){try{localStorage.setItem("sort_grp",grouped?"1":"0");localSt
 $("grp").onclick=()=>{grouped=!grouped;if(grouped)sgrouped=false;setGroup()};
 $("sgrp").onclick=()=>{sgrouped=!sgrouped;if(sgrouped)grouped=false;setGroup()};
 $("go").onclick=async()=>{
-  try{await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast("Kopieren gestartet","ok");poll();reloadKeep()}
+  try{const r=await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast(r.queued?`In die Warteschlange gestellt (Platz ${r.position})`:"Kopieren gestartet","ok");poll();reloadKeep()}
   catch(e){$("err").textContent=e.message}};
 $("stop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
 
@@ -2282,6 +2340,10 @@ async function renderRun(s){
   $("rcur").hidden=!act||!s.current;$("rcn").textContent=s.current||"";
   $("rcp").textContent=s.current_size?`${fmt(s.current_done)} / ${fmt(s.current_size)}`:"";
   $("rcb").style.width=(s.current_size?s.current_done/s.current_size*100:0)+"%";
+  const w=s.waiting||[];$("rwaitcard").hidden=!w.length;
+  if(w.length){$("rwaitsub").textContent=`${w.length} ${w.length===1?"Auftrag wartet":"Aufträge warten"} auf den laufenden Vorgang`;
+    $("rwait").innerHTML=w.map((b,i)=>`<div class="rule"><div><b>${i+1}. ${esc(b.source)}</b><span class="sub">${b.files} Datei(en) · ${fmt(b.size)}</span></div><button data-q="${b.id}">✖ Entfernen</button></div>`).join("");
+    $("rwait").querySelectorAll("button").forEach(x=>x.onclick=async()=>{await api("/api/queue/remove",{id:+x.dataset.q});toast("Aus der Warteschlange entfernt");poll()})}
   const sc=s.schedule;
   $("ridle-txt").innerHTML=(sc.last?`Letzter Lauf: ${esc(sc.last)}<br>`:"")+(sc.enabled?`⏰ Nächster Zeitplan-Lauf: <b>${esc(sc.next||"–")}</b>`:"⏰ Zeitplan ist aus, es läuft nur manuell.");
   $("rqwrap").hidden=!has;
@@ -2292,6 +2354,7 @@ async function renderRun(s){
     $("rhid").textContent=q.hidden?`… und ${q.hidden} weitere ausgeblendet`:""}catch{}}
   try{const a=await api("/api/analysis/status");$("ranacard").hidden=!a.running;
     if(a.running){$("ranatxt").textContent=`${a.done} von ${a.total||"…"} Dateien · ${a.current||""}`;$("ranabar").style.width=(a.total?a.done/a.total*100:5)+"%"}}catch{}}
+$("rwaitclear").onclick=async()=>{await api("/api/queue/clear",{});toast("Warteschlange geleert");poll()};
 $("rstop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
 $("rtosort").onclick=()=>show("sort");
 
@@ -2317,7 +2380,7 @@ async function poll(){try{
   if(wasRunning&&!s.running){
     toast(s.errors.length?`Fertig mit ${s.errors.length} Fehler(n)`:`Fertig: ${s.files_done} von ${s.files_total} Dateien`,s.errors.length?"bad":"ok");
     show(view)}
-  const nr=$("nr");nr.hidden=!s.running;nr.textContent=s.running?Math.round(pct)+"%":"";
+  const nr=$("nr");const wn=(s.waiting||[]).length;nr.hidden=!s.running&&!wn;nr.textContent=(s.running?Math.round(pct)+"%":"")+(wn?` +${wn}`:"");
   if(view==="run")renderRun(s);
   if(s.running&&view==="sort"&&s.files_done!==lastDone&&!dlgOpen()){lastDone=s.files_done;reloadKeep()}
   if(!s.running)lastDone=-1;
