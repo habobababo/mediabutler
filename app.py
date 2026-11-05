@@ -1457,6 +1457,9 @@ code,.path,input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,mon
 .banner.bad{background:var(--badbg);color:var(--bad)}.banner.warn{background:var(--warnbg);color:var(--warn)}.banner.ok{background:var(--okbg);color:var(--ok)}
 
 /* Bedienelemente */
+.tbox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px 4px;margin-bottom:12px}
+.tbox h3{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.tbox .bar{margin-bottom:8px}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
 button,select,input[type=text],input[type=search],input[type=password],input[type=url]{
  font:inherit;border:1.5px solid var(--line);background:var(--surface);color:var(--ink);padding:8px 14px;border-radius:12px;min-height:40px}
@@ -1678,11 +1681,12 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div class="chips" id="tabs"></div>
   </div>
   <div class="bar fq"><input type="search" id="fq" placeholder="🔍 Suchen: Dateiname, Serie oder Pfad" autocomplete="off" aria-label="Dateien suchen"><button id="fmark" hidden>☑️ Treffer markieren</button><span id="fqn" class="sub"></span></div>
+  <section class="tbox" aria-labelledby="tboxh"><h3 id="tboxh">☑️ Markierungen &amp; Ansicht</h3>
   <div class="bar tools">
     <button id="reload">↻ Neu laden</button><button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button><button id="inv" title="Auswahl der sichtbaren Dateien umdrehen">🔁 Umkehren</button>
     <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button><button id="shc" class="toggle" hidden>✅ Schon kopierte zeigen (<span id="shcn">0</span>)</button>
     <span id="sel" class="sub"></span><span class="sub hide-m" style="margin-left:auto">💡 Shift+Klick markiert einen Bereich, Strg+A alles</span>
-  </div>
+  </div></section>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
   <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="gbtn">👥 Neue Gruppe</button><button id="dbtn" class="danger">🗑️ Löschen</button><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
   <div class="table"><table>
