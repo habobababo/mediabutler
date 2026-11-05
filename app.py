@@ -58,7 +58,7 @@ DEFAULT_CFG = {"enabled": False, "cron": "0 3 * * *", "move_after": os.environ.g
                "tg_unclear": True, "tg_unclear_sig": "", "tg_new": True, "tg_progress": True,
                "tg_errors": True, "tg_silent": True, "jellyfin": True,
                "jf_scan": bool(os.environ.get("JELLYFIN_URL") and os.environ.get("JELLYFIN_API_KEY")),
-               "jf_url": os.environ.get("JELLYFIN_URL", "").rstrip("/"), "jf_key": os.environ.get("JELLYFIN_API_KEY", ""), "jf_last": "", "jf_mode": "partial", "jf_root": os.environ.get("JELLYFIN_ROOT", "").rstrip("/"), "public_url": os.environ.get("PUBLIC_URL", "").rstrip("/")}
+               "jf_url": os.environ.get("JELLYFIN_URL", "").rstrip("/"), "jf_key": os.environ.get("JELLYFIN_API_KEY", ""), "jf_last": "", "jf_mode": "partial", "extract_auto": True, "extract_delete": True, "tg_pw": True, "jf_root": os.environ.get("JELLYFIN_ROOT", "").rstrip("/"), "public_url": os.environ.get("PUBLIC_URL", "").rstrip("/")}
 _mem, _flock = {}, threading.Lock()
 
 def load(name, default):
@@ -526,16 +526,388 @@ def purge_samples():
 
 def scan():
     """Fertige Dateien (älter als MIN_AGE): (automatisch zuordenbar, unklar)."""
-    now, items, unclear, cm = time.time(), [], [], load("copied.json", {})
+    now, items, unclear, cm, bl = time.time(), [], [], load("copied.json", {}), extract_blocked()
     for p in sorted(SOURCE.rglob("*")):
         if not (p.is_file() and p.suffix.lower() in VIDEO_EXT) or p.name.startswith(".") or SAMPLE.search(p.name): continue
-        if now - p.stat().st_mtime < MIN_AGE: continue
         rel = p.relative_to(SOURCE).as_posix()
+        if hidden_rel(rel) or ex_blocked(rel, bl): continue
+        if now - p.stat().st_mtime < MIN_AGE: continue
         if is_copied(cm, p, rel): continue
         cat = guess_category(rel)
         if cat: items.append({"src": p, "dst": target_for(rel, cat)})
         else: unclear.append(rel)
     return items, unclear
+
+
+# ---------- Entpacken (RAR/ZIP/7z, auch mehrteilig) ----------
+EX_INTERVAL = int(os.environ.get("EXTRACT_INTERVAL", "20"))
+EX_STABLE = max(10, int(os.environ.get("EXTRACT_STABLE", str(min(MIN_AGE, 60)))))
+exlock = threading.RLock()
+_ex, _exn = {}, {"done": 0}          # id -> Eintrag, Zähler fertiger Archive
+_R_PART = re.compile(r"^(?P<b>.+)\.part0*(?P<n>\d+)\.rar$", re.I)
+_R_OLD = re.compile(r"^(?P<b>.+)\.r(?P<n>\d{2,3})$", re.I)
+_Z_OLD = re.compile(r"^(?P<b>.+)\.z(?P<n>\d{2,3})$", re.I)
+_SPLIT = re.compile(r"^(?P<b>.+\.(?:zip|rar|7z))\.(?P<n>\d{3})$", re.I)
+_INCOMPLETE = re.compile(r"unexpected end of archive|cannot find volume|missing volume|next volume|there are some data after the end", re.I)
+
+def sevenz():
+    return next((b for b in (shutil.which(x) for x in ("7zz", "7z", "7za", "7zr")) if b), None)
+
+def hidden_rel(rel):
+    return any(x.startswith(".") for x in rel.split("/")[:-1])
+
+def ex_blocked(rel, bl):
+    return any(rel == d or rel.startswith(d + "/") for d in bl)
+
+def extract_blocked():
+    """Ordner (relativ zur Quelle), in denen noch entpackt wird oder Archive offen sind. Quell-Wurzel zählt nicht."""
+    with exlock: return sorted({e["dir"] for e in _ex.values() if e.get("dir") and e["state"] != "fehler"})
+
+def ex_summary():
+    with exlock:
+        st = [e["state"] for e in _ex.values()]
+    return {"n": sum(x in ("läuft", "wartet", "unvollständig") for x in st), "pw": st.count("passwort"),
+            "err": st.count("fehler"), "running": "läuft" in st, "done": _exn["done"], "total": len(st)}
+
+def find_archives():
+    groups = {}
+    def grp(p, kind, base):
+        return groups.setdefault((str(p.parent), kind, base.lower()), {"base": base, "dir": p.parent, "main": None, "vols": {}})
+    partial_dirs = set()
+    for p in SOURCE.rglob("*"):
+        try:
+            rel = p.relative_to(SOURCE)
+            if not p.is_file() or any(x.startswith(".") for x in rel.parts): continue
+        except OSError: continue
+        n, low = p.name, p.name.lower()
+        if p.suffix.lower() in PARTIAL_EXT: partial_dirs.add(str(p.parent)); continue
+        if (m := _R_PART.match(n)): grp(p, "rarpart", m["b"])["vols"][int(m["n"])] = p
+        elif (m := _SPLIT.match(n)): grp(p, "split", m["b"])["vols"][int(m["n"])] = p
+        elif low.endswith(".rar"): grp(p, "rar", n[:-4])["main"] = p
+        elif (m := _R_OLD.match(n)): grp(p, "rar", m["b"])["vols"][int(m["n"]) + 1] = p
+        elif low.endswith(".zip"): grp(p, "zip", n[:-4])["main"] = p
+        elif (m := _Z_OLD.match(n)): grp(p, "zip", m["b"])["vols"][int(m["n"])] = p
+        elif low.endswith(".7z"): grp(p, "7z", n[:-3])["main"] = p
+    out = []
+    for (d, kind, _), g in groups.items():
+        vols, main, missing = g["vols"], g["main"], ""
+        if kind in ("rarpart", "split"):
+            if not vols: continue
+            main = vols.get(1)
+            lost = [i for i in range(1, max(vols) + 1) if i not in vols]
+            if lost: missing = f"Teil {lost[0]} fehlt" + (f" (und {len(lost) - 1} weitere)" if len(lost) > 1 else "")
+        elif main is None: continue
+        else:
+            lost = [i for i in range(1, max(vols) + 1) if i not in vols] if vols else []
+            if lost: missing = f"Teil {lost[0]} fehlt" + (f" (und {len(lost) - 1} weitere)" if len(lost) > 1 else "")
+        files = ([main] if main else []) + [v for _, v in sorted(vols.items())]
+        files = list(dict.fromkeys(files))
+        try: stats = [f.stat() for f in files]
+        except OSError: continue
+        rel_main = (main or files[0]).relative_to(SOURCE).as_posix()
+        out.append({"id": hashlib.md5(rel_main.encode()).hexdigest()[:10], "name": g["base"],
+                    "dir": g["dir"].relative_to(SOURCE).as_posix() if g["dir"] != SOURCE else "",
+                    "main": rel_main if main else "", "parts": [f.relative_to(SOURCE).as_posix() for f in files],
+                    "size": sum(s.st_size for s in stats), "newest": max(s.st_mtime for s in stats),
+                    "missing": missing, "partial": d in partial_dirs})
+    return out
+
+def ex_pws():
+    return load("passwords.json", {"list": [], "last": ""})
+
+def add_pw(pw, ok=False):
+    with exlock:
+        d = ex_pws(); pw = pw.strip("\r\n")
+        if not pw: return
+        if pw not in d["list"]: d["list"].append(pw)
+        if ok: d["last"] = pw
+        save("passwords.json", d)
+
+def ex_candidates(e):
+    d = ex_pws()
+    order = [e.get("pw_hint"), d.get("last")] + list(d["list"])
+    return [x for i, x in enumerate(order) if x and x not in order[:i]]
+
+def extract_scan():
+    if not sevenz(): return
+    found = {a["id"]: a for a in find_archives()}
+    now = time.time()
+    with exlock:
+        done = load("extract.json", {}).get("done_sigs", {})
+        for i, a in found.items():
+            sig = f"{i}:{a['size']}"
+            e = _ex.get(i)
+            if e is None:
+                if sig in done: continue
+                e = _ex[i] = {"id": i, "state": "unvollständig", "pct": 0, "msg": "", "found": now, "sig": ""}
+            changed = e["sig"] != sig
+            e.update(name=a["name"], dir=a["dir"], main=a["main"], parts=a["parts"], size=a["size"], sig=sig)
+            if e["state"] == "läuft": continue
+            if a["missing"] or not a["main"]:
+                e.update(state="unvollständig", msg=a["missing"] or "Erster Teil fehlt"); continue
+            if now - a["newest"] < EX_STABLE or a["partial"]:
+                e.update(state="unvollständig", msg="Wird noch geladen …"); continue
+            if (e["state"] == "unvollständig" and now >= e.get("retry_after", 0)) or (changed and e["state"] in ("fehler", "passwort")):
+                e.update(state="wartet", msg="")
+        for i in list(_ex):
+            if i not in found and _ex[i]["state"] != "läuft": del _ex[i]
+
+def ex_pick():
+    c = cfg()
+    with exlock:
+        for e in _ex.values():
+            if e["state"] == "wartet" and (c["extract_auto"] or e.get("force")) and time.time() >= e.get("retry_after", 0):
+                return e
+
+def ex_7z(args, e=None):
+    pr = subprocess.Popen([sevenz()] + args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    buf = b""
+    try:
+        while True:
+            chunk = os.read(pr.stdout.fileno(), 4096)
+            if not chunk: break
+            buf = (buf + chunk)[-8000:]
+            if e is not None:
+                m = re.findall(rb"(\d{1,3})%", chunk)
+                if m: e["pct"] = min(100, int(m[-1]))
+                if e.get("cancel"): pr.terminate()
+        pr.wait()
+    finally:
+        if pr.poll() is None: pr.kill()
+    return pr.returncode, buf.decode("utf-8", "replace")
+
+def ex_probe(main):
+    rc, out = ex_7z(["l", "-slt", "-y", str(main)])
+    low = out.lower()
+    return {"enc": bool(re.search(r"^encrypted = \+", out, re.M | re.I)) or "wrong password" in low or "encrypted archive" in low or "enter password" in low,
+            "incomplete": bool(_INCOMPLETE.search(out)), "rc": rc, "out": out}
+
+def ex_move_into(src, dst):
+    for it in sorted(src.iterdir()):
+        t = dst / it.name
+        if it.is_dir() and not it.is_symlink() and t.is_dir():
+            ex_move_into(it, t); continue
+        if t.exists():
+            k = 2
+            while (dst / f"{it.stem} ({k}){it.suffix}").exists(): k += 1
+            t = dst / f"{it.stem} ({k}){it.suffix}"
+        os.replace(it, t)
+
+def ex_notify_pw(e):
+    with exlock:
+        st = load("extract.json", {}); sig = e["sig"]
+        if sig in st.get("notified", {}): return
+        st.setdefault("notified", {})[sig] = int(time.time())
+        st["notified"] = dict(list(st["notified"].items())[-200:]); save("extract.json", st)
+    c = cfg()
+    if not (c["tg_enabled"] and c["tg_pw"] and c["tg_token"] and c["tg_chat"]): return
+    txt = (f"🔑 Passwort fehlt – Media Sorter\n📦 {e['name']}\n{e['msg']}\n\n"
+           "👉 Antworte auf diese Nachricht mit dem Passwort oder schreibe /pw <Passwort>. "
+           "Es wird gespeichert und deine Nachricht gelöscht." + (f"\n🌐 {ui_link('ext')}" if ui_link("ext") else ""))
+    try:
+        r = tg_api("sendMessage", {"chat_id": c["tg_chat"], "text": txt, "reply_markup": {"force_reply": True, "input_field_placeholder": "Passwort"}})
+        with exlock:
+            st = load("extract.json", {}); st.setdefault("pwmsgs", {})[str(r["message_id"])] = e["id"]
+            st["pwmsgs"] = dict(list(st["pwmsgs"].items())[-50:]); save("extract.json", st)
+    except Exception as x: print("Telegram-Fehler:", x, file=sys.stderr)
+
+def ex_set_password(pw, only=None):
+    """Passwort speichern und alle Archive, die darauf warten, erneut versuchen. -> Anzahl"""
+    add_pw(pw)
+    n = 0
+    with exlock:
+        st = load("extract.json", {})
+        for e in _ex.values():
+            if e["state"] == "passwort" and (only is None or e["id"] == only):
+                e.update(state="wartet", force=True, pw_hint=pw, msg="", retry_after=0); n += 1
+                st.get("notified", {}).pop(e["sig"], None)
+        save("extract.json", st)
+    return n
+
+def extract_run(e):
+    main, base = SOURCE / e["main"], SOURCE / e["dir"]
+    tmp = base / f".entpacken-{e['id']}"
+    c = cfg()
+    with exlock: e.update(state="läuft", pct=0, msg="Prüfe Archiv …", started=time.time(), cancel=False, force=False)
+
+    def fail(state, msg, retry=0):
+        shutil.rmtree(tmp, ignore_errors=True)
+        with exlock: e.update(state=state, msg=msg, pct=0, retry_after=time.time() + retry if retry else 0)
+        if state == "passwort": ex_notify_pw(e)
+        elif state == "fehler":
+            notify(f"⚠️ Media Sorter: Entpacken fehlgeschlagen\n📦 {e['name']}\n{msg}" + (f"\n🌐 {ui_link('ext')}" if ui_link("ext") else ""), "tg_errors")
+
+    def attempt(pws):
+        out, rc = "", 1
+        for i, pw in enumerate(pws):
+            shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True, exist_ok=True)
+            with exlock:
+                e["pct"] = 0
+                e["msg"] = "Entpacke …" if pw is None and len(pws) == 1 else f"Entpacke mit Passwort {i + 1} von {len(pws)} …"
+            rc, out = ex_7z(["x", "-y", "-bsp1", "-bso0", "-aoa", "-o" + str(tmp)] + ([f"-p{pw}"] if pw is not None else []) + [str(main)], e)
+            if e.get("cancel") or rc in (0, 1): return rc, out, pw, False
+            if not re.search(r"wrong password|encrypted", out, re.I): return rc, out, pw, False
+        return rc, out, None, True          # alle Passwörter durch
+
+    try:
+        if not main.is_file(): return fail("unvollständig", "Archiv-Datei nicht gefunden", 60)
+        pr = ex_probe(main)
+        if pr["incomplete"]: return fail("unvollständig", "Es fehlen noch Teile des Archivs", 60)
+        if pr["enc"]:
+            pws = ex_candidates(e)
+            if not pws: return fail("passwort", "Archiv ist verschlüsselt, es ist noch kein Passwort gespeichert.")
+        else: pws = [None]
+        rc, out, used, pwfail = attempt(pws)
+        if pwfail and not pr["enc"]:
+            pws = ex_candidates(e)
+            if pws: rc, out, used, pwfail = attempt(pws)
+            else: return fail("passwort", "Archiv ist verschlüsselt, es ist noch kein Passwort gespeichert.")
+        if e.get("cancel"): return fail("fehler", "Abgebrochen")
+        if pwfail: return fail("passwort", f"Keines der {len(pws)} gespeicherten Passwörter passt.")
+        if rc not in (0, 1):
+            if _INCOMPLETE.search(out): return fail("unvollständig", "Es fehlen noch Teile des Archivs", 60)
+            lines = [x.strip() for x in out.replace("\r", "\n").split("\n") if x.strip() and "%" not in x]
+            return fail("fehler", " ".join(lines[-3:])[:300] or f"7-Zip-Fehlercode {rc}")
+        n = sum(1 for f in tmp.rglob("*") if f.is_file())
+        if not n: return fail("fehler", "Das Archiv enthielt keine Dateien.")
+        with exlock: e["msg"] = "Verschiebe Dateien …"; e["pct"] = 100
+        ex_move_into(tmp, base); shutil.rmtree(tmp, ignore_errors=True)
+        if used is not None: add_pw(used, ok=True)
+        delete = bool(c["extract_delete"]) and rc == 0
+        if delete:
+            for rel in e["parts"]:
+                try: (SOURCE / rel).unlink()
+                except OSError: pass
+        with exlock:
+            st = load("extract.json", {})
+            st.setdefault("done_sigs", {})[e["sig"]] = int(time.time())
+            st["done_sigs"] = dict(list(st["done_sigs"].items())[-500:])
+            st["done"] = ([{"name": e["name"], "dir": e["dir"], "files": n, "size": e["size"], "ended": int(time.time()),
+                            "deleted": delete, "warn": rc == 1, "pw": used is not None}] + st.get("done", []))[:50]
+            save("extract.json", st)
+            _ex.pop(e["id"], None); _exn["done"] += 1
+    except Exception as x:
+        fail("fehler", f"{type(x).__name__}: {x}"[:300])
+
+def ex_cleanup_tmp():
+    for d in SOURCE.rglob(".entpacken-*"):
+        if d.is_dir() and not any(e["state"] == "läuft" for e in _ex.values()): shutil.rmtree(d, ignore_errors=True)
+
+def extract_loop():
+    time.sleep(2)
+    try: ex_cleanup_tmp()
+    except Exception as x: print("Entpacken:", x, file=sys.stderr)
+    last = 0
+    while True:
+        try:
+            if time.time() - last >= EX_INTERVAL: extract_scan(); last = time.time()
+            e = ex_pick()
+            if e: extract_run(e); continue
+        except Exception as x: print("Entpacken:", x, file=sys.stderr)
+        time.sleep(2)
+
+def tg_handle(m):
+    c = cfg(); chat = m.get("chat", {})
+    if str(chat.get("id")) != str(c["tg_chat"]).strip() and ("@" + str(chat.get("username", ""))) != str(c["tg_chat"]).strip(): return
+    text = (m.get("text") or "").strip()
+    rid = (m.get("reply_to_message") or {}).get("message_id")
+    pw = None
+    if rid is not None and str(rid) in load("extract.json", {}).get("pwmsgs", {}): pw = text
+    elif re.match(r"^/pw(@\w+)?(\s|$)", text, re.I): pw = re.sub(r"^/pw(@\w+)?\s*", "", text, flags=re.I)
+    else: return
+    reply = lambda t: tg_api("sendMessage", {"chat_id": c["tg_chat"], "text": t})
+    if not pw: return reply("🔑 Bitte so: /pw <Passwort> – oder direkt auf die Passwort-Nachricht antworten.")
+    n = ex_set_password(pw)
+    try: tg_api("deleteMessage", {"chat_id": c["tg_chat"], "message_id": m["message_id"]})
+    except Exception: pass
+    reply(f"🔑 Passwort gespeichert – {n} Archiv(e) werden erneut versucht." if n else "🔑 Passwort gespeichert. Gerade wartet kein Archiv darauf.")
+
+def tg_poller():
+    """Fragt Telegram nur ab, solange ein Archiv auf ein Passwort wartet."""
+    off = None
+    while True:
+        try:
+            c = cfg()
+            if not (c["tg_enabled"] and c["tg_token"] and c["tg_chat"]) or not ex_summary()["pw"]:
+                time.sleep(5); continue
+            payload = {"timeout": 20, "allowed_updates": ["message"]}
+            if off is not None: payload["offset"] = off
+            for u in tg_api("getUpdates", payload, timeout=30) or []:
+                off = u["update_id"] + 1
+                if u.get("message"):
+                    try: tg_handle(u["message"])
+                    except Exception as x: print("Telegram:", x, file=sys.stderr)
+            time.sleep(1)
+        except Exception as x:
+            print("Telegram-Abfrage:", x, file=sys.stderr); time.sleep(15)
+
+def ex_public(e):
+    return {"id": e["id"], "name": e.get("name", ""), "dir": e.get("dir", ""), "state": e["state"], "pct": e.get("pct", 0), "msg": e.get("msg", ""),
+            "size": e.get("size", 0), "nparts": len(e.get("parts", [])), "auto": bool(cfg()["extract_auto"])}
+
+def ex_payload():
+    d, st, c = ex_pws(), load("extract.json", {}), cfg()
+    with exlock: items = [ex_public(e) for e in sorted(_ex.values(), key=lambda x: x.get("found", 0))]
+    mask = lambda p: (p[0] + "•" * min(len(p) - 2, 8) + p[-1]) if len(p) > 2 else "••"
+    return {"available": bool(sevenz()), "auto": c["extract_auto"], "delete": c["extract_delete"], "items": items,
+            "done": st.get("done", [])[:30], "pws": [mask(p) for p in d["list"]], "tg": bool(c["tg_enabled"] and c["tg_pw"])}
+
+@app.get("/api/extract")
+def ex_get():
+    return jsonify(ex_payload())
+
+@app.post("/api/extract/scan")
+def ex_scan_api():
+    extract_scan(); return jsonify(ex_payload())
+
+@app.post("/api/extract/settings")
+def ex_settings():
+    d = request.get_json() or {}
+    save_cfg(extract_auto=bool(d.get("auto")), extract_delete=bool(d.get("delete")))
+    return jsonify(ex_payload())
+
+@app.post("/api/extract/start")
+def ex_start():
+    i = (request.get_json() or {}).get("id")
+    with exlock:
+        e = _ex.get(i)
+        if e and e["state"] in ("wartet", "fehler", "unvollständig", "passwort"):
+            e.update(state="wartet", force=True, retry_after=0, msg="")
+    return jsonify(ex_payload())
+
+@app.post("/api/extract/cancel")
+def ex_cancel():
+    with exlock:
+        e = _ex.get((request.get_json() or {}).get("id"))
+        if e and e["state"] == "läuft": e["cancel"] = True
+    return jsonify(ok=True)
+
+@app.post("/api/extract/dismiss")
+def ex_dismiss():
+    with exlock:
+        e = _ex.get((request.get_json() or {}).get("id"))
+        if e and e["state"] != "läuft":
+            st = load("extract.json", {}); st.setdefault("done_sigs", {})[e["sig"]] = int(time.time()); save("extract.json", st)
+            del _ex[e["id"]]
+    return jsonify(ex_payload())
+
+@app.post("/api/extract/password")
+def ex_password():
+    d = request.get_json() or {}
+    pw = str(d.get("pw", ""))
+    if not pw.strip(): return jsonify(error="Bitte ein Passwort eingeben."), 400
+    n = ex_set_password(pw, d.get("id") or None)
+    return jsonify(n=n, **ex_payload())
+
+@app.post("/api/extract/password/delete")
+def ex_password_delete():
+    i = (request.get_json() or {}).get("i")
+    with exlock:
+        d = ex_pws()
+        if isinstance(i, int) and 0 <= i < len(d["list"]):
+            if d.get("last") == d["list"][i]: d["last"] = ""
+            d["list"].pop(i); save("passwords.json", d)
+    return jsonify(ex_payload())
 
 # ---------- Aufräumen ----------
 def dir_info(d):
@@ -549,7 +921,8 @@ def dir_info(d):
     partial = any(ext(f) in PARTIAL_EXT for f, _ in files)
     arch = any(ext(f) in ARCHIVE_EXT or re.fullmatch(r"\.(r\d{2,3}|\d{3})", ext(f)) for f, _ in files)
     newest = max((s.st_mtime for _, s in files), default=d.stat().st_mtime)
-    reason = ("enthält noch Medien" if media else "wird noch geschrieben" if partial
+    reason = ("wird gerade entpackt" if any(x == d.name or x.startswith(d.name + "/") for x in extract_blocked())
+              else "enthält noch Medien" if media else "wird noch geschrieben" if partial
               else "kürzlich geändert" if time.time() - newest < MIN_AGE else "")
     return {"path": d.name, "type": "dir", "files": len(files), "size": sum(s.st_size for _, s in files), "media": media,
             "archives": arch, "locked": reason, "sample": [f.name for f, _ in files[:3]]}
@@ -695,13 +1068,24 @@ def ui_link(frag=""):
     base = cfg()["public_url"].rstrip("/")
     return "" if not base else (f"{base}/#{frag}" if frag else base + "/")
 
+TG_API = os.environ.get("TG_API", "https://api.telegram.org").rstrip("/")
+
+def tg_api(method, payload, timeout=10):
+    token = cfg()["tg_token"]
+    req = urllib.request.Request(f"{TG_API}/bot{token}/{method}", data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r: return json.loads(r.read()).get("result")
+    except Exception as e:
+        raise RuntimeError(str(e).replace(token, "***")) from None
+
 def tg_send(text, token=None, chat=None, urgent=True):
     c = cfg()
     token, chat = token or c["tg_token"], chat or c["tg_chat"]
     if not token or not chat:
         raise ValueError("Bot-Token und Chat-ID fehlen")
     req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
+        f"{TG_API}/bot{token}/sendMessage",
         data=json.dumps({"chat_id": chat, "text": text[:4000], "disable_web_page_preview": True,
                          "disable_notification": bool(c["tg_silent"] and not urgent)}).encode(),
         headers={"Content-Type": "application/json"})
@@ -1084,20 +1468,22 @@ def settings_payload():
     return {**c, "tg_token_set": bool(tok), "jf_key_set": bool(jk), "next": nxt, "error": err,
             "tz": datetime.now().astimezone().tzname(), "persist": PERSIST,
             "info": {"source": str(SOURCE), "target": str(TARGET), "data": str(DATA), "min_age": MIN_AGE,
-                     "auth": bool(AUTH_PASS), "ffprobe": bool(shutil.which("ffprobe")), "watch": WATCH_INTERVAL}}
+                     "auth": bool(AUTH_PASS), "ffprobe": bool(shutil.which("ffprobe")), "sevenz": bool(sevenz()), "watch": WATCH_INTERVAL}}
 
 @app.get("/api/files")
 def files():
-    out, cm = [], load("copied.json", {})
+    out, cm, bl = [], load("copied.json", {}), extract_blocked()
     with lock: busy_src = {q["src"] for q in job["queue"] if q["state"] in ("wartet", "kopiert") and "src" in q} if job["running"] else set()
     with qcv: busy_src |= {it["src"].relative_to(SOURCE).as_posix() for b in pending for it in b["items"]}
     for p in sorted(SOURCE.rglob("*")):
         if p.is_file() and p.suffix.lower() in VIDEO_EXT and not SAMPLE.search(p.name):
             rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
+            if hidden_rel(rel) or ex_blocked(rel, bl): continue
             out.append({"path": rel, "size": p.stat().st_size, "category": cat, "target": target_for(rel, cat).as_posix() if cat else "",
                         "series": series_info(rel), "copied": is_copied(cm, p, rel), "busy": rel in busy_src})
     shows = {show_dir(f["target"]) for f in out if f["series"] and f["target"]}
-    return jsonify(library=library_eps(shows), files=out, categories=CATEGORIES, source=str(SOURCE), target=str(TARGET), target_mounted=TARGET.is_dir())
+    return jsonify(library=library_eps(shows), files=out, categories=CATEGORIES, source=str(SOURCE), target=str(TARGET), target_mounted=TARGET.is_dir(),
+                   extracting=ex_summary())
 
 @app.get("/api/rules")
 def rules_get():
@@ -1271,6 +1657,7 @@ def status():
         for q in job["queue"]: j["counts"][q["state"]] = j["counts"].get(q["state"], 0) + 1
     j["elapsed"] = (time.time() if j["running"] else (j["ended"] or time.time())) - j["started"] if j["started"] else 0
     j["schedule"] = schedule_info()
+    j["extract"] = ex_summary()
     with qcv: j["batches"] = len(pending)
     j["waiting"] = [{"id": b["id"], "source": b["source"], "files": len(b["items"]), "size": b["size"]} for b in waiting_batches()]
     return jsonify(j)
@@ -1457,6 +1844,10 @@ code,.path,input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,mon
 .banner.bad{background:var(--badbg);color:var(--bad)}.banner.warn{background:var(--warnbg);color:var(--warn)}.banner.ok{background:var(--okbg);color:var(--ok)}
 
 /* Bedienelemente */
+.exitem{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;max-width:760px}
+.exitem .exh{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px}.exitem .bar{margin:8px 0 0}
+.exitem .prog{margin-top:8px}.exitem input{flex:1 1 180px;min-width:0}
+.exrow{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:14px}.exrow:first-child{border-top:0}
 .tbox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px 4px;margin-bottom:12px}
 .tbox h3{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .tbox .bar{margin-bottom:8px}
@@ -1658,6 +2049,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 <div class="topbar"><nav class="nav" id="nav" aria-label="Bereiche">
   <button data-v="sort" title="Sortieren" aria-label="Sortieren"><span class="ic">📥</span><span class="lbl">Sortieren</span><span class="badge hot" id="ns" hidden></span></button>
   <button data-v="run" title="Läuft" aria-label="Läuft"><span class="ic">⚡</span><span class="lbl">Läuft</span><span class="badge live" id="nr" hidden></span></button>
+  <button data-v="ext" title="Entpacken" aria-label="Entpacken"><span class="ic">📦</span><span class="lbl">Entpacken</span><span class="badge" id="ne" hidden></span></button>
   <button data-v="hist" title="Verschoben" aria-label="Verschoben"><span class="ic">✅</span><span class="lbl">Verschoben</span><span class="badge" id="nh" hidden></span></button>
   <button data-v="clean" title="Aufräumen" aria-label="Aufräumen"><span class="ic">🧹</span><span class="lbl">Aufräumen</span><span class="badge" id="nc" hidden></span></button>
   <button data-v="ana" title="Analyse" aria-label="Analyse"><span class="ic">📊</span><span class="lbl">Analyse</span></button>
@@ -1677,9 +2069,11 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     </div></div>
 </header>
 <div id="warn"></div>
+<div id="warn2"></div>
 
 
 <section id="v-sort">
+  <div id="exbar" class="banner warn" hidden>📦 <span><span id="extxt"></span> <button class="link" id="exgo">Zum Reiter Entpacken</button></span></div>
   <div class="bar">
     <div class="chips" id="tabs"></div>
   </div>
@@ -1780,6 +2174,26 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div class="bar" id="rchips"></div>
     <div class="table"><table><thead><tr><th>🚦 Status</th><th>📍 Wird abgelegt als</th><th>💾 Größe</th></tr></thead><tbody id="rrows"></tbody></table></div>
     <p class="sub" id="rhid" style="margin-top:8px"></p>
+  </div>
+</section>
+
+<section id="v-ext" hidden>
+  <div id="exno" class="banner bad" hidden>⚠️ <span>7-Zip fehlt im Container. Bitte neu bauen: <code>docker compose up -d --build</code></span></div>
+  <div class="card">
+    <header><span class="ico">📦</span><div><h2>Entpacken</h2><p class="sub">RAR (auch .part01.rar, .r00) und ZIP (auch .z01) werden im Quellordner entpackt. Erst danach erscheinen die Dateien unter „Sortieren“.</p></div></header>
+    <label class="opt"><input type="checkbox" id="exauto"><span><b>Automatisch entpacken</b><small>Fertig geladene Archive werden von allein entpackt. Aus: nur per Knopfdruck.</small></span></label>
+    <label class="opt"><input type="checkbox" id="exdel"><span><b>Archive nach dem Entpacken löschen</b><small>Alle Teile werden gelöscht, sobald alles fehlerfrei entpackt wurde.</small></span></label>
+    <div class="bar" style="margin-top:8px"><button id="exscan">↻ Jetzt nach Archiven suchen</button></div>
+  </div>
+  <div id="exlist"></div>
+  <div class="card">
+    <header><span class="ico">🔑</span><div><h2>Passwörter</h2><p class="sub">Werden der Reihe nach ausprobiert. Fehlt eins, bekommst du eine Meldung hier und per Telegram und kannst es dort direkt beantworten.</p></div></header>
+    <div id="expws"></div>
+    <div class="bar" style="margin-top:8px"><input id="expwnew" type="password" placeholder="Neues Passwort" autocomplete="off" style="flex:1 1 200px"><button id="expwadd" class="primary">Hinzufügen</button></div>
+  </div>
+  <div class="card" id="exdonecard" hidden>
+    <header><span class="ico">✅</span><div><h2>Zuletzt entpackt</h2></div></header>
+    <div id="exdone"></div>
   </div>
 </section>
 
@@ -1947,11 +2361,43 @@ async function copyText(t,btn){
 
 let view="sort",files=[],cats=[],filter="Alle",hist=[],running=false;
 function show(v){view=v;try{history.replaceState(null,"",v==="sort"?location.pathname+location.search:"#"+v)}catch{}
-  for(const s of["sort","run","hist","clean","ana","sched","set"])$("v-"+s).hidden=s!==v;
+  for(const s of["sort","run","ext","hist","clean","ana","sched","set"])$("v-"+s).hidden=s!==v;
   $("nav").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
   $("go").hidden=v!=="sort";
-  ({sort:loadFiles,run:()=>api("/api/status").then(renderRun),hist:loadHist,clean:loadClean,ana:loadAna,sched:loadSched,set:loadSched})[v]()}
+  ({sort:loadFiles,run:()=>api("/api/status").then(renderRun),ext:loadExt,hist:loadHist,clean:loadClean,ana:loadAna,sched:loadSched,set:loadSched})[v]()}
 $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
+
+
+/* Entpacken */
+const EXST={läuft:["⏳","entpackt","ok"],wartet:["🕒","wartet",""],unvollständig:["🧩","wartet auf Teile","warn"],passwort:["🔑","Passwort fehlt","bad"],fehler:["⛔","Fehler","bad"]};
+async function loadExt(){
+  if($("v-ext").contains(document.activeElement)&&document.activeElement.tagName==="INPUT"&&document.activeElement.value)return;
+  renderExt(await api("/api/extract"))}
+function renderExt(r){
+  $("exno").hidden=r.available;$("exauto").checked=r.auto;$("exdel").checked=r.delete;
+  $("exlist").innerHTML=r.items.length?r.items.map(e=>{const [ic,lb,cl]=EXST[e.state]||["",e.state,""];
+    const act=e.state==="läuft"?`<button data-a="cancel" data-id="${e.id}">⏹ Abbrechen</button>`
+      :`<button data-a="start" data-id="${e.id}">▶️ ${e.state==="wartet"&&e.auto?"Jetzt starten":"Jetzt entpacken"}</button><button class="ghost" data-a="dismiss" data-id="${e.id}" title="Aus der Liste nehmen, bis sich das Archiv ändert">Ignorieren</button>`;
+    return `<div class="exitem" data-id="${e.id}"><div class="exh"><b>📦 ${esc(e.name)}</b><span class="tag ${cl}">${ic} ${lb}</span></div>
+      <div class="sub mono">${esc(e.dir||"/")} · ${e.nparts} Teil(e) · ${fmt(e.size)}</div>
+      ${e.state==="läuft"?`<div class="prog run"><i style="width:${e.pct}%"></i></div><div class="sub">${e.pct} % ${esc(e.msg)}</div>`:(e.msg?`<div class="sub">${esc(e.msg)}</div>`:"")}
+      ${e.state==="passwort"?`<div class="bar"><input type="password" class="expw" placeholder="Passwort für dieses Archiv" autocomplete="off"><button class="primary" data-a="pw" data-id="${e.id}">🔑 Speichern &amp; erneut versuchen</button></div>`:""}
+      <div class="bar">${act}</div></div>`}).join("")
+    :'<div class="card empty"><div class="big">📭</div><b>Keine Archive im Quellordner</b>Neue .rar- und .zip-Dateien werden automatisch erkannt.</div>';
+  $("expws").innerHTML=r.pws.length?r.pws.map((p,i)=>`<div class="exrow"><span class="mono">${esc(p)}</span><button class="danger" data-pwdel="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Passwörter gespeichert.</p>';
+  $("exdonecard").hidden=!r.done.length;
+  $("exdone").innerHTML=r.done.map(d=>`<div class="exrow"><span>📦 <b>${esc(d.name)}</b> <span class="sub">${d.files} Datei(en)${d.pw?" · 🔑":""}</span></span><span class="sub">${new Date(d.ended*1000).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · ${d.deleted?"Archiv gelöscht":"Archiv behalten"}${d.warn?" · mit Warnungen":""}</span></div>`).join("")}
+$("exlist").onclick=async ev=>{const b=ev.target.closest("button[data-a]");if(!b)return;const id=b.dataset.id,a=b.dataset.a;
+  try{if(a==="pw"){const v=b.closest(".exitem").querySelector(".expw").value;if(!v)return toast("Bitte ein Passwort eingeben","bad");
+      const r=await api("/api/extract/password",{pw:v,id});toast("Passwort gespeichert, versuche es erneut","ok");renderExt(r)}
+    else if(a==="cancel"){await api("/api/extract/cancel",{id});toast("Wird abgebrochen …","ok")}
+    else renderExt(await api("/api/extract/"+a,{id}))}catch(e){toast(e.message,"bad")}};
+$("expws").onclick=async ev=>{const b=ev.target.closest("[data-pwdel]");if(b)renderExt(await api("/api/extract/password/delete",{i:+b.dataset.pwdel}))};
+$("expwadd").onclick=async()=>{const v=$("expwnew").value;if(!v)return;try{renderExt(await api("/api/extract/password",{pw:v}));$("expwnew").value="";toast("Passwort gespeichert","ok")}catch(e){toast(e.message,"bad")}};
+const exSet=async()=>renderExt(await api("/api/extract/settings",{auto:$("exauto").checked,delete:$("exdel").checked}));
+$("exauto").onchange=exSet;$("exdel").onchange=exSet;
+$("exscan").onclick=async()=>{renderExt(await api("/api/extract/scan",{}));toast("Neu gesucht","ok")};
+$("exgo").onclick=()=>show("ext");
 
 /* Sortieren */
 const unclearN=()=>files.filter(f=>!f.category).length;
@@ -1967,6 +2413,7 @@ async function loadFiles(){
   const nc=r.files.filter(f=>f.copied).length;files=showCopied?r.files:r.files.filter(f=>!f.copied&&!f.busy);
   $("shc").hidden=!nc;$("shcn").textContent=nc;$("shc").classList.toggle("on",showCopied);
   files.forEach(f=>{f.sel=marked.has(f.path)});
+  const xe=r.extracting||{};$("exbar").hidden=!xe.n;$("extxt").textContent=`${xe.n} Archiv(e) werden entpackt oder warten darauf. Die Dateien erscheinen danach hier.`;
   $("src").textContent=r.source;$("tgt").textContent=r.target;
   $("warn").innerHTML=r.target_mounted?"":'<div class="banner bad">⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>';
   $("bchips").innerHTML=cats.map(c=>`<button class="chip" data-c="${c}">${ICON[c]} ${c}</button>`).join("");
@@ -2500,6 +2947,7 @@ $("rtosort").onclick=()=>show("sort");
 let wasRunning=false,lastDone=-1;
 const dlgOpen=()=>[...document.querySelectorAll("dialog")].some(d=>d.open);
 $("schgo").onclick=()=>show("sched");
+let exDone=-1;
 async function poll(){try{
   const s=await api("/api/status");
   running=s.running;
@@ -2518,13 +2966,19 @@ async function poll(){try{
   if(wasRunning&&!s.running){
     toast(s.errors.length?`Fertig mit ${s.errors.length} Fehler(n)`:`Fertig: ${s.files_done} von ${s.files_total} Dateien`,s.errors.length?"bad":"ok");
     show(view)}
+  const ex=s.extract||{};const ne=$("ne");ne.hidden=!(ex.pw||ex.n||ex.err);ne.className="badge"+(ex.pw||ex.err?" hot":ex.running?" live":"");
+  ne.textContent=ex.pw?"🔑":ex.err?"!":ex.n||"";
+  $("warn2").innerHTML=ex.pw?`<div class="banner warn">🔑 <span><b>Passwort fehlt</b> für ${ex.pw} Archiv(e). <button class="link" id="expwgo">Jetzt eingeben</button></span></div>`:"";
+  if($("expwgo"))$("expwgo").onclick=()=>show("ext");
+  if(view==="ext")loadExt();
+  if(exDone!==ex.done){if(exDone>=0&&view==="sort"&&!dlgOpen())reloadKeep();exDone=ex.done}
   const nr=$("nr");const wn=(s.waiting||[]).length;nr.hidden=!s.running&&!wn;nr.textContent=(s.running?Math.round(pct)+"%":"")+(wn?` +${wn}`:"");
   if(view==="run")renderRun(s);
   if(s.running&&view==="sort"&&s.files_done!==lastDone&&!dlgOpen()){lastDone=s.files_done;reloadKeep()}
   if(!s.running)lastDone=-1;
   wasRunning=s.running}catch{}}
 setInterval(poll,1000);
-const HV={clarify:"sort",sort:"sort",run:"run",hist:"hist",clean:"clean",ana:"ana",sched:"sched",set:"set"};
+const HV={clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",ana:"ana",sched:"sched",set:"set"};
 function route(){const h=location.hash.slice(1);if(h==="clarify")filter="Klärung";show(HV[h]||"sort")}
 window.addEventListener("hashchange",route);
 const dockEl=document.querySelector(".dock");
@@ -2561,4 +3015,6 @@ if __name__ == "__main__":
         sys.exit(cli())
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=watcher, daemon=True).start()
+    threading.Thread(target=extract_loop, daemon=True).start()
+    threading.Thread(target=tg_poller, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, threaded=True)
