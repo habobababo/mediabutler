@@ -852,9 +852,8 @@ def ex_public(e):
 def ex_payload():
     d, st, c = ex_pws(), load("extract.json", {}), cfg()
     with exlock: items = [ex_public(e) for e in sorted(_ex.values(), key=lambda x: x.get("found", 0))]
-    mask = lambda p: (p[0] + "•" * min(len(p) - 2, 8) + p[-1]) if len(p) > 2 else "••"
     return {"available": bool(sevenz()), "auto": c["extract_auto"], "delete": c["extract_delete"], "items": items,
-            "done": st.get("done", [])[:30], "pws": [mask(p) for p in d["list"]], "tg": bool(c["tg_enabled"] and c["tg_pw"])}
+            "done": st.get("done", [])[:30], "pws": list(d["list"]), "tg": bool(c["tg_enabled"] and c["tg_pw"])}
 
 @app.get("/api/extract")
 def ex_get():
@@ -2202,7 +2201,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div class="card">
     <header><span class="ico">🔑</span><div><h2>Passwörter</h2><p class="sub">Werden der Reihe nach ausprobiert. Fehlt eins, bekommst du eine Meldung hier und per Telegram und kannst es dort direkt beantworten.</p></div></header>
     <div id="expws"></div>
-    <div class="bar" style="margin-top:8px"><input id="expwnew" type="password" placeholder="Neues Passwort" autocomplete="off" style="flex:1 1 200px"><button id="expwadd" class="primary">Hinzufügen</button></div>
+    <div class="bar" style="margin-top:8px"><input id="expwnew" type="text" placeholder="Neues Passwort" autocomplete="off" autocapitalize="off" spellcheck="false" style="flex:1 1 200px"><button id="expwadd" class="primary">Hinzufügen</button></div>
   </div>
   <div class="card" id="exdonecard" hidden>
     <header><span class="ico">✅</span><div><h2>Zuletzt entpackt</h2></div></header>
@@ -2395,7 +2394,7 @@ function renderExt(r){
     return `<div class="exitem" data-id="${e.id}"><div class="exh"><b>📦 ${esc(e.name)}</b><span class="tag ${cl}">${ic} ${lb}</span></div>
       <div class="sub mono">${esc(e.dir||"/")} · ${e.nparts} Teil(e) · ${fmt(e.size)}</div>
       ${e.state==="läuft"?`<div class="prog run"><i style="width:${e.pct}%"></i></div><div class="sub">${e.pct} % ${esc(e.msg)}</div>`:(e.msg?`<div class="sub">${esc(e.msg)}</div>`:"")}
-      ${e.state==="passwort"?(e.id===pwFirst?`<div class="bar"><input type="password" class="expw" placeholder="Passwort (gilt für alle wartenden Archive)" autocomplete="off"><button class="primary" data-a="pw">🔑 Speichern &amp; erneut versuchen</button></div>`:'<div class="sub">🔑 Wartet auf dasselbe Passwort – Eingabe siehe oben.</div>'):""}
+      ${e.state==="passwort"?(e.id===pwFirst?`<div class="bar"><input type="text" class="expw" placeholder="Passwort (gilt für alle wartenden Archive)" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="primary" data-a="pw">🔑 Speichern &amp; erneut versuchen</button></div>`:'<div class="sub">🔑 Wartet auf dasselbe Passwort – Eingabe siehe oben.</div>'):""}
       <div class="bar">${act}</div></div>`}).join("")
     :'<div class="card empty"><div class="big">📭</div><b>Keine Archive im Quellordner</b>Neue .rar- und .zip-Dateien werden automatisch erkannt.</div>';
   $("expws").innerHTML=r.pws.length?r.pws.map((p,i)=>`<div class="exrow"><span class="mono">${esc(p)}</span><button class="danger" data-pwdel="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Passwörter gespeichert.</p>';
