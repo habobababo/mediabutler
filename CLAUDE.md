@@ -1,10 +1,10 @@
-# Media Sorter
+# MediaButler
 
 Self-hosted Web-Tool (Flask, eine Datei `app.py`), das Downloads in Filme, Serien, Anime und Dokus sortiert und auf ein NFS-Share kopiert. Alle UI-Texte und die Kommunikation sind Deutsch.
 
 ## Betrieb
 - `docker compose up -d` (Dockerfile nur bei Änderungen neu bauen: `--build`).
-- `app.py` ist per Bind-Mount eingebunden: Update = Datei tauschen + `docker restart media-sorter`.
+- `app.py` ist per Bind-Mount eingebunden: Update = Datei tauschen + `docker restart mediabutler`.
 - Pfade: Quelle `/mnt/share/media/downloads` -> `/incoming`, Ziel `/mnt/share/media` -> `/media`, Einstellungen in `./data` -> `/data`.
 - Umgebungsvariablen: SOURCE_DIR, TARGET_DIR, DATA_DIR, PUBLIC_URL, AUTH_USER/AUTH_PASS, MIN_AGE, WATCH_INTERVAL, MOVE_AFTER.
 

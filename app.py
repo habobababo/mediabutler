@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Media Sorter – sortiert Filme, Serien, Anime und Dokus und kopiert/verschiebt sie auf ein NFS-Share.
+MediaButler – sortiert Filme, Serien, Anime und Dokus und kopiert/verschiebt sie auf ein NFS-Share.
 Web-UI mit Fortschrittsbalken, Verlauf, Aufräumen und eingebautem Cron-Zeitplan.
 
 Umgebungsvariablen:
@@ -11,7 +11,7 @@ Umgebungsvariablen:
 
 CLI (z.B. für System-Cron):  python app.py --auto [--dry-run]
 """
-import fcntl, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.request
+import base64, fcntl, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -26,7 +26,7 @@ AUTH_USER = os.environ.get("AUTH_USER", "admin")
 AUTH_PASS = os.environ.get("AUTH_PASS", "")   # leer = kein Login (z.B. wenn der Reverse Proxy schon schützt)
 API_KEY = os.environ.get("API_KEY", "")      # optional: erlaubt Skripten/Apps (z. B. pyLoad n Click) nur POST /api/hook, ohne Login
 MIN_AGE = int(os.environ.get("MIN_AGE", "120"))
-LOCKFILE = "/tmp/media-sorter.lock"
+LOCKFILE = "/tmp/mediabutler.lock"
 VERSION = "1.1.0"
 BUILD = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:7]    # zeigt, welche app.py wirklich läuft
 CATEGORIES = ["Filme", "Serien", "Anime", "Dokus"]
@@ -41,13 +41,13 @@ app = Flask(__name__)
 
 @app.before_request
 def basic_auth():
-    if not AUTH_PASS: return
+    if not AUTH_PASS or request.path in PUBLIC_PATHS: return
     if API_KEY and request.path == "/api/hook" and hmac.compare_digest(request.headers.get("X-API-Key", "").encode(), API_KEY.encode()): return
     a = request.authorization
     if (a and hmac.compare_digest((a.username or "").encode(), AUTH_USER.encode())
             and hmac.compare_digest((a.password or "").encode(), AUTH_PASS.encode())):
         return
-    return Response("Login erforderlich", 401, {"WWW-Authenticate": 'Basic realm="Media Sorter", charset="UTF-8"'})
+    return Response("Login erforderlich", 401, {"WWW-Authenticate": 'Basic realm="MediaButler", charset="UTF-8"'})
 lock = threading.Lock()
 job = {"running": False, "cancel": False, "total": 0, "done": 0, "files_total": 0, "files_done": 0,
        "current": "", "current_size": 0, "current_done": 0, "speed": 0, "errors": [], "finished": False,
@@ -515,19 +515,22 @@ def safe_source(rel):
         raise ValueError(f"Ungültiger Pfad: {rel}")
     return p
 
-SAMPLE = re.compile(r"\.sample\.[^.]+$", re.I)    # film.sample.mkv, aber nicht Free.Sample.2016.mkv
-def purge_samples():
-    """Löscht fertige Sample-Dateien im Quellordner (nie im Ziel) und protokolliert sie."""
+SAMPLE = re.compile(r"\.samples?\.[^.]+$", re.I)    # film.sample.mkv / film.samples.mkv, aber nicht Free.Sample.2016.mkv
+def purge_samples(now_=False):
+    """Löscht Sample-Dateien im Quellordner (nie im Ziel) und protokolliert sie. now_=True: sofort, ohne Wartezeit."""
     now = time.time()
     for p in SOURCE.rglob("*"):
         try:
-            if SAMPLE.search(p.name) and p.is_file() and now - p.stat().st_mtime >= MIN_AGE:
+            if SAMPLE.search(p.name) and p.suffix.lower() not in PARTIAL_EXT and p.is_file() and not hidden_rel(p.relative_to(SOURCE).as_posix()) \
+                    and (now_ or now - p.stat().st_mtime >= MIN_AGE):
                 p.unlink(); print("Sample gelöscht:", p, file=sys.stderr)
         except OSError as e:
             print("Sample nicht gelöscht:", p, e, file=sys.stderr)
 
 def scan():
     """Fertige Dateien (älter als MIN_AGE): (automatisch zuordenbar, unklar)."""
+    try: purge_samples(True)
+    except Exception as e: print("Sample-Fehler:", e, file=sys.stderr)
     now, items, unclear, cm, bl = time.time(), [], [], load("copied.json", {}), extract_blocked()
     for p in sorted(SOURCE.rglob("*")):
         if not (p.is_file() and p.suffix.lower() in VIDEO_EXT) or p.name.startswith(".") or SAMPLE.search(p.name): continue
@@ -705,7 +708,7 @@ def ex_notify_pw(e):
         st["notified"] = dict(list(st["notified"].items())[-200:]); save("extract.json", st)
     c = cfg()
     if not (c["tg_enabled"] and c["tg_pw"] and c["tg_token"] and c["tg_chat"]): return
-    txt = (f"🔑 Passwort fehlt – Media Sorter\n📦 {e['name']}\n{e['msg']}\n\n"
+    txt = (f"🔑 Passwort fehlt – MediaButler\n📦 {e['name']}\n{e['msg']}\n\n"
            "👉 Antworte auf diese Nachricht mit dem Passwort oder schreibe /pw <Passwort>. "
            "Es wird gespeichert und deine Nachricht gelöscht." + (f"\n🌐 {ui_link('ext')}" if ui_link("ext") else ""))
     try:
@@ -739,7 +742,7 @@ def extract_run(e):
         with exlock: e.update(state=state, msg=msg, pct=0, retry_after=time.time() + retry if retry else 0)
         if state == "passwort": ex_notify_pw(e)
         elif state == "fehler":
-            notify(f"⚠️ Media Sorter: Entpacken fehlgeschlagen\n📦 {e['name']}\n{msg}" + (f"\n🌐 {ui_link('ext')}" if ui_link("ext") else ""), "tg_errors")
+            notify(f"⚠️ MediaButler: Entpacken fehlgeschlagen\n📦 {e['name']}\n{msg}" + (f"\n🌐 {ui_link('ext')}" if ui_link("ext") else ""), "tg_errors")
 
     def attempt(pws):
         out, rc = "", 1
@@ -772,10 +775,14 @@ def extract_run(e):
             if _INCOMPLETE.search(out): return fail("unvollständig", "Es fehlen noch Teile des Archivs", 60)
             lines = [x.strip() for x in out.replace("\r", "\n").split("\n") if x.strip() and "%" not in x]
             return fail("fehler", " ".join(lines[-3:])[:300] or f"7-Zip-Fehlercode {rc}")
-        n = sum(1 for f in tmp.rglob("*") if f.is_file())
+        outs = sorted((f for f in tmp.rglob("*") if f.is_file()), key=lambda f: (f.suffix.lower() not in VIDEO_EXT, -f.stat().st_size))
+        n = len(outs)
         if not n: return fail("fehler", "Das Archiv enthielt keine Dateien.")
+        out_names = [f.name for f in outs[:6]]
         with exlock: e["msg"] = "Verschiebe Dateien …"; e["pct"] = 100
         ex_move_into(tmp, base); shutil.rmtree(tmp, ignore_errors=True)
+        try: purge_samples(True)
+        except Exception as x: print("Sample-Fehler:", x, file=sys.stderr)
         if used is not None: add_pw(used, ok=True)
         delete = bool(c["extract_delete"]) and rc == 0
         if delete:
@@ -786,7 +793,7 @@ def extract_run(e):
             st = load("extract.json", {})
             st.setdefault("done_sigs", {})[e["sig"]] = int(time.time())
             st["done_sigs"] = dict(list(st["done_sigs"].items())[-500:])
-            st["done"] = ([{"name": e["name"], "dir": e["dir"], "files": n, "size": e["size"], "ended": int(time.time()),
+            st["done"] = ([{"name": e["name"], "dir": e["dir"], "files": n, "out": out_names, "size": e["size"], "ended": int(time.time()),
                             "deleted": delete, "warn": rc == 1, "pw": used is not None}] + st.get("done", []))[:50]
             save("extract.json", st)
             _ex.pop(e["id"], None); _exn["done"] += 1
@@ -1128,7 +1135,7 @@ def unclear_notice(unclear):
         save_cfg(tg_unclear_sig=""); return
     if c["tg_enabled"] and c["tg_unclear"]:
         lines = "\n".join(f"• {u}" for u in unclear[:8]) + (f"\n… und {len(unclear) - 8} weitere" if len(unclear) > 8 else "")
-        notify(f"🚨 Handlungsbedarf – Media Sorter\n❓ {len(unclear)} Datei(en) brauchen eine Zuordnung, der Zeitplan überspringt sie.\n{lines}\n"
+        notify(f"🚨 Handlungsbedarf – MediaButler\n❓ {len(unclear)} Datei(en) brauchen eine Zuordnung, der Zeitplan überspringt sie.\n{lines}\n"
                "Bitte im Reiter „Sortieren“ zuordnen." + (f"\n👉 {ui_link('clarify')}" if ui_link("clarify") else ""), "tg_unclear", urgent=True)
         save_cfg(tg_unclear_sig=sig)
 
@@ -1146,7 +1153,7 @@ def run_job(items, source="manuell"):
         if items:
             cats = Counter(i["dst"].parts[0] for i in items)
             size = sum(i["src"].stat().st_size for i in items if i["src"].exists())
-            notify(f"▶️ Media Sorter: Kopieren gestartet ({source})\n{len(items)} Datei(en), {hsize(size)}\n"
+            notify(f"▶️ MediaButler: Kopieren gestartet ({source})\n{len(items)} Datei(en), {hsize(size)}\n"
                    + " · ".join(f"{k} {v}" for k, v in cats.items()), "tg_start")
         ok = _run_job(items, source, c["move_after"])
         if ok:
@@ -1174,7 +1181,7 @@ def run_job(items, source="manuell"):
         head = "⛔ Abgebrochen" if job["cancel"] else ("⚠️ Fertig mit Fehlern" if errs else "✅ Fertig")
         lines = [f"• {it['dst'].as_posix()}" for it, _ in ok[:10]]
         if len(ok) > 10: lines.append(f"… und {len(ok) - 10} weitere")
-        txt = (f"{head} – Media Sorter ({source})\n{len(ok)} von {len(items)} Datei(en) übertragen, "
+        txt = (f"{head} – MediaButler ({source})\n{len(ok)} von {len(items)} Datei(en) übertragen, "
                f"{hsize(sum(sz for _, sz in ok))} in {hdur(time.time() - t0)}\nZiel: {TARGET}\n" + "\n".join(lines))
         if errs: txt += "\nFehler:\n" + "\n".join(f"– {e}" for e in errs[:5])
         if unclear:
@@ -1238,7 +1245,7 @@ def jf_after_queue():
     else:
         ok, msg = jf_refresh(c["jf_url"], c["jf_key"])
     save_cfg(jf_last=f"{datetime.now():%Y-%m-%d %H:%M:%S}: {msg}")
-    if not ok: notify(f"⚠️ Media Sorter: Jellyfin-Scan fehlgeschlagen – {msg}", "tg_errors")
+    if not ok: notify(f"⚠️ MediaButler: Jellyfin-Scan fehlgeschlagen – {msg}", "tg_errors")
 
 def enqueue(items, source):
     """-> (neue Dateien, musste warten). Dateien, die schon laufen oder warten, werden nicht doppelt aufgenommen."""
@@ -1281,8 +1288,8 @@ def waiting_batches():
 
 def trigger(source):
     if not TARGET.is_dir():
-        alert_once("target", True, f"🚨 Handlungsbedarf – Media Sorter\nDas Ziel {TARGET} ist nicht erreichbar. Ist das NFS-Share eingebunden? Bis dahin wird nichts kopiert.",
-                   "✅ Media Sorter: Das Ziel ist wieder erreichbar.")
+        alert_once("target", True, f"🚨 Handlungsbedarf – MediaButler\nDas Ziel {TARGET} ist nicht erreichbar. Ist das NFS-Share eingebunden? Bis dahin wird nichts kopiert.",
+                   "✅ MediaButler: Das Ziel ist wieder erreichbar.")
         return False, f"Ziel {TARGET} nicht erreichbar (NFS gemountet?)"
     items, unclear = scan()
     unclear_notice(unclear)
@@ -1332,7 +1339,7 @@ def announce_new(items):
     names = [f"• {i['src'].name}" for i in items[:6]] + ([f"… und {len(items) - 6} weitere"] if len(items) > 6 else [])
     sch = schedule_info()
     when = f"⏰ Nächster Lauf: {sch['next']}" if sch["enabled"] and sch["next"] else "⏰ Zeitplan ist aus, bitte manuell starten"
-    txt = (f"📥 Media Sorter: {len(items)} neue Datei(en) bereit ({hsize(size)})\n"
+    txt = (f"📥 MediaButler: {len(items)} neue Datei(en) bereit ({hsize(size)})\n"
            + ", ".join(f"{k} {v}" for k, v in cats.items()) + "\n" + "\n".join(names) + f"\n{when}")
     if ui_link("sort"): txt += f"\n👉 {ui_link('sort')}"
     notify(txt, "tg_new", wait=True)
@@ -1344,11 +1351,11 @@ def watch_once(state):
         state.update(last_new=set(), stable=0); return
     link = f"\n👉 {ui_link('sched')}" if ui_link("sched") else ""
     alert_once("target", not TARGET.is_dir(),
-               f"🚨 Handlungsbedarf – Media Sorter\nDas Ziel {TARGET} ist nicht erreichbar. Ist das NFS-Share eingebunden? Bis dahin wird nichts kopiert.{link}",
-               "✅ Media Sorter: Das Ziel ist wieder erreichbar.")
+               f"🚨 Handlungsbedarf – MediaButler\nDas Ziel {TARGET} ist nicht erreichbar. Ist das NFS-Share eingebunden? Bis dahin wird nichts kopiert.{link}",
+               "✅ MediaButler: Das Ziel ist wieder erreichbar.")
     src_ok = SOURCE.is_dir()
-    alert_once("source", not src_ok, f"🚨 Handlungsbedarf – Media Sorter\nDer Quellordner {SOURCE} ist nicht erreichbar.{link}",
-               "✅ Media Sorter: Der Quellordner ist wieder erreichbar.")
+    alert_once("source", not src_ok, f"🚨 Handlungsbedarf – MediaButler\nDer Quellordner {SOURCE} ist nicht erreichbar.{link}",
+               "✅ MediaButler: Der Quellordner ist wieder erreichbar.")
     if not src_ok: return
     items, unclear = scan()
     unclear_notice(unclear)
@@ -1378,7 +1385,7 @@ def _progress_note(mark, source, t0):
     with lock:
         done, total, fd, ft, speed = job["done"], job["total"], job["files_done"], job["files_total"], job["speed"]
     eta = (time.time() - t0) * (total - done) / done if done else 0
-    txt = f"⏳ Media Sorter: {mark} % geschafft ({source})\n{fd} von {ft} Datei(en), {hsize(done)} von {hsize(total)}"
+    txt = f"⏳ MediaButler: {mark} % geschafft ({source})\n{fd} von {ft} Datei(en), {hsize(done)} von {hsize(total)}"
     if speed and eta: txt += f"\n{hsize(speed)}/s, noch ca. {hdur(eta)}"
     notify(txt, "tg_progress")
 
@@ -1484,6 +1491,8 @@ def settings_payload():
 
 @app.get("/api/files")
 def files():
+    try: purge_samples(True)
+    except Exception as e: print("Sample-Fehler:", e, file=sys.stderr)
     out, cm, bl = [], load("copied.json", {}), extract_blocked()
     with lock: busy_src = {q["src"] for q in job["queue"] if q["state"] in ("wartet", "kopiert") and "src" in q} if job["running"] else set()
     with qcv: busy_src |= {it["src"].relative_to(SOURCE).as_posix() for b in pending for it in b["items"]}
@@ -1801,6 +1810,39 @@ def cron_preview():
     try: return jsonify(ok=True, next=[fmt_dt(t) for t in next_runs(request.args.get("expr", ""))])
     except ValueError as e: return jsonify(ok=False, error=str(e))
 
+
+# ---------- Icon (Servierglocke mit Play-Dreieck) ----------
+ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="116" fill="#36415a"/>
+<circle cx="256" cy="150" r="22" fill="#b7d894"/>
+<rect x="246" y="164" width="20" height="26" rx="6" fill="#b7d894"/>
+<path d="M106 346 C106 244 172 186 256 186 C340 186 406 244 406 346 Z" fill="#b7d894"/>
+<path d="M150 322 C156 262 198 226 244 218" fill="none" stroke="#e0f8c7" stroke-width="12" stroke-linecap="round"/>
+<path d="M226 250 L226 322 L292 286 Z" fill="#202734" stroke="#202734" stroke-width="14" stroke-linejoin="round"/>
+<rect x="82" y="358" width="348" height="26" rx="13" fill="#b7d894"/>
+<rect x="150" y="396" width="212" height="12" rx="6" fill="#e0f8c7" fill-opacity=".35"/>
+</svg>"""
+ICON_PNG = base64.b64decode("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")
+MANIFEST = {"name": "MediaButler", "short_name": "MediaButler", "start_url": "/", "display": "standalone",
+            "background_color": "#202734", "theme_color": "#202734",
+            "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
+                      {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"}]}
+PUBLIC_PATHS = {"/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/favicon.ico", "/manifest.webmanifest"}
+
+@app.get("/icon.svg")
+def icon_svg():
+    return Response(ICON_SVG, mimetype="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+@app.get("/icon-192.png")
+@app.get("/apple-touch-icon.png")
+@app.get("/favicon.ico")
+def icon_png():
+    return Response(ICON_PNG, mimetype="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return Response(json.dumps(MANIFEST), mimetype="application/manifest+json")
+
 @app.get("/")
 def index():
     return Response(PAGE.replace("{{VERSION}}", f"v{VERSION} · {BUILD}"), mimetype="text/html", headers={"Cache-Control": "no-store"})
@@ -1809,21 +1851,16 @@ def index():
 PAGE = r"""<!doctype html>
 <html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#4a56c8">
-<title>Media Sorter</title>
+<meta name="theme-color" content="#202734">
+<link rel="icon" href="/icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest">
+<title>MediaButler</title>
 <style>
 :root{
- --bg:#f5f6f8;--surface:#fff;--ink:#1f2430;--muted:#6b7280;--line:#e5e7eb;--soft:#f0f2f5;
- --brand:#4a56c8;--brand2:#4a56c8;--brand-ink:#fff;
- --ok:#2f8a66;--okbg:#e4f2ec;--warn:#9a6700;--warnbg:#faf0d9;--bad:#b83a52;--badbg:#f9e6ea;
- --c-Filme:#b97a45;--c-Serien:#5a7cc0;--c-Anime:#a8648f;--c-Dokus:#4b957a;--c-:#9a6700;
- --shadow:0 1px 2px rgba(20,24,40,.05),0 4px 14px rgba(20,24,40,.05);color-scheme:light}
-@media (prefers-color-scheme:dark){:root{
- --bg:#14161b;--surface:#1c1f26;--ink:#e8eaee;--muted:#9aa1ad;--line:#2b2f38;--soft:#242831;
- --brand:#8e99f0;--brand2:#8e99f0;--brand-ink:#14161b;
- --ok:#6cc5a0;--okbg:#17302a;--warn:#e0b45c;--warnbg:#332a14;--bad:#f08a9f;--badbg:#3a1b24;
- --c-Filme:#d49a68;--c-Serien:#85a2dc;--c-Anime:#cc89b3;--c-Dokus:#6cc5a0;--c-:#e0b45c;
- --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.2);color-scheme:dark}}
+ --bg:#202734;--surface:#2a3347;--ink:#e0f8c7;--muted:#a9b8ae;--line:#3f4b66;--soft:#36415a;
+ --brand:#b7d894;--brand2:#b7d894;--brand-ink:#202734;--hero:#36415a;
+ --ok:#b7d894;--okbg:#2e4234;--warn:#f0c46a;--warnbg:#463c20;--bad:#ff8c9d;--badbg:#4a2a37;
+ --c-Filme:#f0a45c;--c-Serien:#8fb8ff;--c-Anime:#f58aa8;--c-Dokus:#6fd6b8;--c-:#f0c46a;
+ --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25);color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;padding-top:env(safe-area-inset-top,0px);background:var(--bg);color:var(--ink);
  font:15px/1.5 ui-rounded,"SF Pro Rounded","Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-serif}
@@ -1834,22 +1871,21 @@ code,.path,input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,mon
 [hidden]{display:none!important}
 
 /* Kopfbereich */
-.hero{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:14px}
-.brand{display:flex;gap:12px;align-items:center}
-.logo{font-size:28px;line-height:1;background:var(--soft);border-radius:12px;padding:8px 10px}
-.hero{position:relative;padding-top:28px}.ver{position:absolute;top:8px;right:18px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
-.hero p{color:var(--muted);font-size:14px}
-.flow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
-.pathchip{background:var(--soft);border-radius:10px;padding:5px 10px;min-width:0;max-width:100%}
-.pathchip small{display:block;font-size:11px;color:var(--muted);line-height:1.2}
-.pathchip code{word-break:break-all}
-.arrow{color:var(--muted)}
-.hero .brand{justify-content:space-between;flex-wrap:wrap;align-items:flex-start;gap:12px 20px}.hero .brand>div:first-of-type{flex:1 1 320px}
-.hero .logo{display:none}.hero h1:before{content:"🎞️ "}.hero .flow{margin-top:8px}
-.stats{display:flex;gap:8px;margin-top:0}
-.stat{background:var(--soft);border-radius:12px;padding:6px 12px;min-width:92px;display:flex;flex-direction:column-reverse}
-.stat b{display:block;font-size:20px;line-height:1.1}.stat span{font-size:12px;color:var(--muted);white-space:nowrap}
-.stat.alert{background:var(--warnbg)}.stat.alert b,.stat.alert span{color:var(--warn)}
+.hero{position:relative;display:grid;grid-template-columns:1fr auto;gap:14px 28px;align-items:center;background:var(--hero);color:#e0f8c7;
+ border-radius:22px;padding:22px 24px 20px;margin-bottom:16px;box-shadow:var(--shadow)}
+.hero .brand{grid-column:1;display:flex;gap:14px;align-items:center;min-width:0}
+.hero .logo{width:58px;height:58px;border-radius:15px;flex:none;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+.hero h1{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0;color:#e0f8c7}
+.hero .claim{color:rgba(255,255,255,.8);font-size:14px;margin-top:3px}
+.hero .flow{grid-column:1;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hero .arrow{color:rgba(255,255,255,.6)}
+.pathchip{background:rgba(32,39,52,.45);color:#e0f8c7;border-radius:10px;padding:5px 10px;min-width:0;max-width:100%}
+.pathchip code{word-break:break-all;color:#e0f8c7}
+.ver{position:absolute;top:10px;right:16px;font-size:11.5px;color:rgba(255,255,255,.65);font-variant-numeric:tabular-nums}
+.stats{grid-column:2;grid-row:1 / span 2;display:flex;gap:10px}
+.stat{background:rgba(32,39,52,.45);border-radius:14px;padding:9px 14px;min-width:96px;display:flex;flex-direction:column-reverse}
+.stat b{display:block;font-size:24px;line-height:1.1;font-weight:800}.stat span{font-size:12px;color:rgba(255,255,255,.8);white-space:nowrap}
+.stat.alert{background:#b7d894}.stat.alert b,.stat.alert span{color:#202734}
 
 /* Hinweise */
 .banner{border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:flex-start;font-size:14px}
@@ -1884,12 +1920,11 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--brand)}
 .nav{display:flex;gap:6px;max-width:100%}
 .nav button{position:relative;border-radius:999px;background:var(--surface);white-space:nowrap;display:flex;gap:6px;align-items:center;justify-content:center;padding:0;width:42px;height:42px;min-height:42px;font-size:19px;line-height:1}
 .nav button .lbl{display:none;font-size:14px;font-weight:600}
-.nav button.on{width:auto;padding:0 14px}
+.nav button.on{width:auto;padding:0 14px;background:var(--brand);color:var(--brand-ink);border-color:transparent;box-shadow:0 2px 8px rgba(0,0,0,.35)}
 @media (min-width:700px){.nav button.on .lbl{display:inline}}
 .nav .badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;line-height:18px;font-size:11px;padding:0 5px;box-shadow:0 0 0 2px var(--bg)}
-.nav button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .badge{min-width:20px;height:20px;border-radius:10px;padding:0 6px;font-size:12px;line-height:20px;text-align:center;background:var(--soft);color:var(--muted)}
-.badge.hot{background:var(--warn);color:#fff}
+.badge.hot{background:var(--warn);color:#202734}
 
 /* Filter-Chips */
 .chips{display:flex;gap:6px;flex-wrap:wrap}
@@ -1897,7 +1932,7 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--brand)}
 .chip[data-c]{--cc:var(--c-)}
 .chip[data-c=Filme]{--cc:var(--c-Filme)}.chip[data-c=Serien]{--cc:var(--c-Serien)}.chip[data-c=Anime]{--cc:var(--c-Anime)}.chip[data-c=Dokus]{--cc:var(--c-Dokus)}
 .chip[data-c=Alle]{--cc:var(--brand)}
-.chip.on{background:var(--cc);border-color:var(--cc);color:#fff}
+.chip.on{background:var(--cc);border-color:var(--cc);color:#202734}
 .chip.on:hover:not(:disabled){background:var(--cc);border-color:var(--cc)}
 .chip i{font-style:normal;font-size:12px;opacity:.85}
 
@@ -1958,7 +1993,7 @@ details ol{padding-left:20px;margin:6px 0}
 /* Meldungen */
 #toasts{position:fixed;left:0;right:0;top:calc(12px + env(safe-area-inset-top,0px));display:flex;flex-direction:column;align-items:center;gap:8px;z-index:50;pointer-events:none;padding:0 12px}
 .toast{background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:520px;font-weight:600;animation:pop .2s}
-.toast.ok{background:var(--ok);color:#fff}.toast.bad{background:var(--bad);color:#fff}
+.toast.ok{background:var(--ok);color:#202734}.toast.bad{background:var(--bad);color:#202734}
 @keyframes pop{from{transform:translateY(-8px);opacity:0}}
 
 @media (pointer:coarse){
@@ -1966,15 +2001,16 @@ details ol{padding-left:20px;margin:6px 0}
  input[type=checkbox]:not(.sw){width:22px;height:22px}}
 @media (pointer:coarse){button.chip{min-height:38px;font-size:14px;padding:4px 12px}}
 @media (max-width:720px){
- .brand{gap:10px}.flow{margin-top:8px}.stats{width:100%;margin-top:2px}.stat{flex:1;min-width:0;padding:6px 8px}.stat span{white-space:normal}
+ .hero{grid-template-columns:1fr;padding:18px 16px 16px;gap:12px;border-radius:20px}.hero .stats{grid-column:1;grid-row:auto;width:100%}
+ .hero .logo{width:48px;height:48px;border-radius:13px}.hero h1{font-size:23px}.hero .claim{font-size:13px}
+ .stat{flex:1;min-width:0;padding:7px 10px}.stat span{white-space:normal}
  .stat span{font-size:12px;line-height:1.25}
  .bar.tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}.bar.tools button{padding:6px 8px;white-space:nowrap}
  #presets{flex-wrap:wrap!important;overflow:visible!important}
  .bar.tools #sel{grid-column:1/-1}
  .sched{white-space:nowrap;margin-bottom:6px}.sched>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
  main{padding:10px 12px 24px}
- .hero{border-radius:16px;padding:14px}h1{font-size:21px}.logo{font-size:26px;padding:6px 8px}
- .stat b{font-size:19px}.stat{padding:7px 10px}
+ .stat b{font-size:20px}
  .chips{flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:4px}.chip{white-space:nowrap}
  .table{background:none;border:0;box-shadow:none;overflow:visible}
  table{display:block}tbody{display:block}thead{display:none}
@@ -2020,7 +2056,7 @@ tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix
 .ctx button.danger{border:0;background:none}.ctx button.danger:hover:not(:disabled){background:var(--badbg)}
 .ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
 td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
-.badge.live{background:var(--ok);color:#fff;animation:pulse 1.4s ease-in-out infinite}.nav .on .badge.live{background:var(--ok);color:#fff}
+.badge.live{background:var(--ok);color:#202734;animation:pulse 1.4s ease-in-out infinite}.nav .on .badge.live{background:var(--ok);color:#202734}
 @keyframes pulse{50%{opacity:.55}}
 .rtiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
 .rtile{background:var(--soft);border-radius:12px;padding:8px 12px}.rtile small{display:block;font-size:12px;color:var(--muted)}.rtile b{font-size:17px}
@@ -2071,14 +2107,14 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 
 <header class="hero">
   <span class="ver" title="Version und Prüfsumme der laufenden app.py">{{VERSION}}</span>
-  <div class="brand"><span class="logo" aria-hidden="true">🎞️</span>
-    <div><h1>Media Sorter</h1>
-      <div class="flow"><span class="pathchip" title="Quellordner">📥 <code id="src">…</code></span><span class="arrow" aria-hidden="true">➜</span><span class="pathchip" title="Ziel auf dem NFS-Share">🗄️ <code id="tgt">…</code></span></div></div>
-    <div class="stats">
-      <div class="stat"><span>📦 bereit</span><b id="st-ready">0</b></div>
-      <div class="stat" id="st-clar-box"><span>❓ brauchen dich</span><b id="st-clar">0</b></div>
-      <div class="stat"><span>✅ verschoben</span><b id="st-hist">0</b></div>
-    </div></div>
+  <div class="brand"><img class="logo" src="/icon.svg" alt="" width="58" height="58">
+    <div><h1>MediaButler</h1><div class="claim">Sortiert, entpackt und serviert deine Medien.</div></div></div>
+  <div class="flow"><span class="pathchip" title="Quellordner">📥 <code id="src">…</code></span><span class="arrow" aria-hidden="true">➜</span><span class="pathchip" title="Ziel auf dem NFS-Share">🗄️ <code id="tgt">…</code></span></div>
+  <div class="stats">
+    <div class="stat"><span>📦 bereit</span><b id="st-ready">0</b></div>
+    <div class="stat" id="st-clar-box"><span>❓ brauchen dich</span><b id="st-clar">0</b></div>
+    <div class="stat"><span>✅ verschoben</span><b id="st-hist">0</b></div>
+  </div>
 </header>
 <div id="warn"></div>
 <div id="warn2"></div>
@@ -2193,8 +2229,6 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div id="exno" class="banner bad" hidden>⚠️ <span>7-Zip fehlt im Container. Bitte neu bauen: <code>docker compose up -d --build</code></span></div>
   <div class="card">
     <header><span class="ico">📦</span><div><h2>Entpacken</h2><p class="sub">RAR (auch .part01.rar, .r00) und ZIP (auch .z01) werden im Quellordner entpackt. Erst danach erscheinen die Dateien unter „Sortieren“.</p></div></header>
-    <label class="opt"><input type="checkbox" id="exauto"><span><b>Automatisch entpacken</b><small>Fertig geladene Archive werden von allein entpackt. Aus: nur per Knopfdruck.</small></span></label>
-    <label class="opt"><input type="checkbox" id="exdel"><span><b>Archive nach dem Entpacken löschen</b><small>Alle Teile werden gelöscht, sobald alles fehlerfrei entpackt wurde.</small></span></label>
     <div class="bar" style="margin-top:8px"><button id="exscan">↻ Jetzt nach Archiven suchen</button></div>
   </div>
   <div id="exlist"></div>
@@ -2291,6 +2325,11 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 
 <section id="v-set" hidden>
   <div id="nop2" class="banner warn" hidden>⚠️ <span>Einstellungen gehen beim Neustart verloren. Binde ein Volume auf /data ein.</span></div>
+  <div class="card">
+    <header><span class="ico">📦</span><div><h2>Entpacken</h2><p class="sub">Gilt für RAR-, ZIP- und 7z-Archive im Quellordner (Übersicht im Reiter „Entpacken“).</p></div></header>
+    <label class="opt"><input type="checkbox" id="exauto"><span><b>Automatisch entpacken</b><small>Fertig geladene Archive werden von allein entpackt. Aus: nur per Knopfdruck.</small></span></label>
+    <label class="opt"><input type="checkbox" id="exdel"><span><b>Archive nach dem Entpacken löschen</b><small>Alle Teile werden gelöscht, sobald alles fehlerfrei entpackt wurde.</small></span></label>
+  </div>
   <div class="card">
     <header><span class="ico">🗂️</span><div><h2>Verarbeitung</h2><p class="sub">Gilt fürs manuelle Kopieren und für den Zeitplan.</p></div></header>
     <label class="opt"><input type="checkbox" id="mv"><span><b>Quelle nach dem Kopieren löschen</b><small>Dateien werden verschoben statt kopiert.</small></span></label>
@@ -2399,7 +2438,7 @@ function renderExt(r){
     :'<div class="card empty"><div class="big">📭</div><b>Keine Archive im Quellordner</b>Neue .rar- und .zip-Dateien werden automatisch erkannt.</div>';
   $("expws").innerHTML=r.pws.length?r.pws.map((p,i)=>`<div class="exrow"><span class="mono">${esc(p)}</span><button class="danger" data-pwdel="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Passwörter gespeichert.</p>';
   $("exdonecard").hidden=!r.done.length;
-  $("exdone").innerHTML=r.done.map(d=>`<div class="exrow"><span>📦 <b>${esc(d.name)}</b> <span class="sub">${d.files} Datei(en)${d.pw?" · 🔑":""}</span></span><span class="sub">${new Date(d.ended*1000).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · ${d.deleted?"Archiv gelöscht":"Archiv behalten"}${d.warn?" · mit Warnungen":""}</span></div>`).join("")}
+  $("exdone").innerHTML=r.done.map(d=>`<div class="exrow"><span>🎬 <b>${esc((d.out&&d.out[0])||d.name)}</b> <span class="sub">${d.files>1?`+${d.files-1} weitere · `:""}${d.pw?"🔑 · ":""}aus ${esc(d.name)}</span></span><span class="sub">${new Date(d.ended*1000).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · ${d.deleted?"Archiv gelöscht":"Archiv behalten"}${d.warn?" · mit Warnungen":""}</span></div>`).join("")}
 $("exlist").onclick=async ev=>{const b=ev.target.closest("button[data-a]");if(!b)return;const id=b.dataset.id,a=b.dataset.a;
   try{if(a==="pw"){const v=b.closest(".exitem").querySelector(".expw").value;if(!v)return toast("Bitte ein Passwort eingeben","bad");
       const r=await api("/api/extract/password",{pw:v});toast("Passwort gespeichert, versuche es erneut","ok");renderExt(r)}
@@ -2890,7 +2929,7 @@ function lastInfo(s){$("last").textContent=s.last_run?`${fdate(s.last_run)}: ${s
 function nextList(n,err){$("cerr").textContent=err||"";$("next").innerHTML=n.map(x=>`<li>${esc(x)}</li>`).join("")}
 function tokHint(set){$("tgtok").value="";$("tgtok").placeholder=set?"Token gespeichert (leer lassen zum Behalten)":"Bot-Token (123456:ABC…)"}
 function fillSettings(s){
-  $("en").checked=s.enabled;$("cron").value=s.cron;$("mv").checked=s.move_after;$("cu").checked=s.cleanup_after;$("jf").checked=s.jellyfin!==false;$("jfs").checked=!!s.jf_scan;$("jfmode").value=s.jf_mode||"partial";$("jfroot").value=s.jf_root||"";$("jfroot").placeholder="Zielordner aus Sicht von Jellyfin (leer = "+s.info.target+")";$("jfurl").value=s.jf_url||"";$("jfkey").value="";
+  $("en").checked=s.enabled;$("cron").value=s.cron;$("mv").checked=s.move_after;$("cu").checked=s.cleanup_after;$("jf").checked=s.jellyfin!==false;$("exauto").checked=s.extract_auto!==false;$("exdel").checked=s.extract_delete!==false;$("jfs").checked=!!s.jf_scan;$("jfmode").value=s.jf_mode||"partial";$("jfroot").value=s.jf_root||"";$("jfroot").placeholder="Zielordner aus Sicht von Jellyfin (leer = "+s.info.target+")";$("jfurl").value=s.jf_url||"";$("jfkey").value="";
   $("jfkey").placeholder=s.jf_key_set?"API-Key gespeichert (leer lassen zum Behalten)":"API-Key (Jellyfin → Dashboard → API-Schlüssel)";$("jfmsg").textContent=s.jf_last?"Zuletzt: "+s.jf_last:"";
   $("tge").checked=s.tg_enabled;$("puburl").value=s.public_url||"";$("tgchat").value=s.tg_chat;$("tgs").checked=s.tg_start;$("tgd").checked=s.tg_done;$("tgu").checked=s.tg_unclear;
   $("tgn").checked=s.tg_new;$("tgp").checked=s.tg_progress;$("tgr").checked=s.tg_errors;$("tgq").checked=s.tg_silent;
