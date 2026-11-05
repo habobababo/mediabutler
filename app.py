@@ -697,7 +697,9 @@ def ex_notify_pw(e):
     with exlock:
         st = load("extract.json", {}); sig = e["sig"]
         if sig in st.get("notified", {}): return
+        asked = any(o is not e and o["state"] == "passwort" and o["sig"] in st.get("notified", {}) for o in _ex.values())
         st.setdefault("notified", {})[sig] = int(time.time())
+        if asked: save("extract.json", st); return          # ein Passwort gilt meist für alle Teile: nur einmal fragen
         st["notified"] = dict(list(st["notified"].items())[-200:]); save("extract.json", st)
     c = cfg()
     if not (c["tg_enabled"] and c["tg_pw"] and c["tg_token"] and c["tg_chat"]): return
@@ -2371,9 +2373,10 @@ $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 /* Entpacken */
 const EXST={läuft:["⏳","entpackt","ok"],wartet:["🕒","wartet",""],unvollständig:["🧩","wartet auf Teile","warn"],passwort:["🔑","Passwort fehlt","bad"],fehler:["⛔","Fehler","bad"]};
 async function loadExt(){
-  if($("v-ext").contains(document.activeElement)&&document.activeElement.tagName==="INPUT"&&document.activeElement.value)return;
+  if($("v-ext").contains(document.activeElement)&&document.activeElement.tagName==="INPUT")return;   // sonst schließt sich die Tastatur am Handy
   renderExt(await api("/api/extract"))}
 function renderExt(r){
+  const pwFirst=(r.items.find(e=>e.state==="passwort")||{}).id;
   $("exno").hidden=r.available;$("exauto").checked=r.auto;$("exdel").checked=r.delete;
   $("exlist").innerHTML=r.items.length?r.items.map(e=>{const [ic,lb,cl]=EXST[e.state]||["",e.state,""];
     const act=e.state==="läuft"?`<button data-a="cancel" data-id="${e.id}">⏹ Abbrechen</button>`
@@ -2381,7 +2384,7 @@ function renderExt(r){
     return `<div class="exitem" data-id="${e.id}"><div class="exh"><b>📦 ${esc(e.name)}</b><span class="tag ${cl}">${ic} ${lb}</span></div>
       <div class="sub mono">${esc(e.dir||"/")} · ${e.nparts} Teil(e) · ${fmt(e.size)}</div>
       ${e.state==="läuft"?`<div class="prog run"><i style="width:${e.pct}%"></i></div><div class="sub">${e.pct} % ${esc(e.msg)}</div>`:(e.msg?`<div class="sub">${esc(e.msg)}</div>`:"")}
-      ${e.state==="passwort"?`<div class="bar"><input type="password" class="expw" placeholder="Passwort für dieses Archiv" autocomplete="off"><button class="primary" data-a="pw" data-id="${e.id}">🔑 Speichern &amp; erneut versuchen</button></div>`:""}
+      ${e.state==="passwort"?(e.id===pwFirst?`<div class="bar"><input type="password" class="expw" placeholder="Passwort (gilt für alle wartenden Archive)" autocomplete="off"><button class="primary" data-a="pw">🔑 Speichern &amp; erneut versuchen</button></div>`:'<div class="sub">🔑 Wartet auf dasselbe Passwort – Eingabe siehe oben.</div>'):""}
       <div class="bar">${act}</div></div>`}).join("")
     :'<div class="card empty"><div class="big">📭</div><b>Keine Archive im Quellordner</b>Neue .rar- und .zip-Dateien werden automatisch erkannt.</div>';
   $("expws").innerHTML=r.pws.length?r.pws.map((p,i)=>`<div class="exrow"><span class="mono">${esc(p)}</span><button class="danger" data-pwdel="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Passwörter gespeichert.</p>';
@@ -2389,7 +2392,7 @@ function renderExt(r){
   $("exdone").innerHTML=r.done.map(d=>`<div class="exrow"><span>📦 <b>${esc(d.name)}</b> <span class="sub">${d.files} Datei(en)${d.pw?" · 🔑":""}</span></span><span class="sub">${new Date(d.ended*1000).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · ${d.deleted?"Archiv gelöscht":"Archiv behalten"}${d.warn?" · mit Warnungen":""}</span></div>`).join("")}
 $("exlist").onclick=async ev=>{const b=ev.target.closest("button[data-a]");if(!b)return;const id=b.dataset.id,a=b.dataset.a;
   try{if(a==="pw"){const v=b.closest(".exitem").querySelector(".expw").value;if(!v)return toast("Bitte ein Passwort eingeben","bad");
-      const r=await api("/api/extract/password",{pw:v,id});toast("Passwort gespeichert, versuche es erneut","ok");renderExt(r)}
+      const r=await api("/api/extract/password",{pw:v});toast("Passwort gespeichert, versuche es erneut","ok");renderExt(r)}
     else if(a==="cancel"){await api("/api/extract/cancel",{id});toast("Wird abgebrochen …","ok")}
     else renderExt(await api("/api/extract/"+a,{id}))}catch(e){toast(e.message,"bad")}};
 $("expws").onclick=async ev=>{const b=ev.target.closest("[data-pwdel]");if(b)renderExt(await api("/api/extract/password/delete",{i:+b.dataset.pwdel}))};
