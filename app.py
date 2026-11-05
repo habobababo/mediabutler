@@ -1477,13 +1477,15 @@ button.link{border:0;background:none;padding:0;min-height:0;color:var(--brand);t
 input[type=checkbox]{width:18px;height:18px;accent-color:var(--brand)}
 
 /* Reiter */
-.nav{display:flex;gap:6px;margin-bottom:14px;overflow-x:auto;position:sticky;top:env(safe-area-inset-top,0px);z-index:5;
- background:var(--bg);padding:6px 0;scrollbar-width:none}
-.nav::-webkit-scrollbar{display:none}
-.nav button{border-radius:999px;background:var(--surface);white-space:nowrap;display:flex;gap:6px;align-items:center;padding:8px 16px}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding:6px 0;margin-bottom:8px;display:flex;justify-content:flex-end}
+.nav{display:flex;gap:6px;max-width:100%}
+.nav button{position:relative;border-radius:999px;background:var(--surface);white-space:nowrap;display:flex;gap:6px;align-items:center;justify-content:center;padding:0;width:42px;height:42px;min-height:42px;font-size:19px;line-height:1}
+.nav button .lbl{display:none;font-size:14px;font-weight:600}
+.nav button.on{width:auto;padding:0 14px}
+@media (min-width:700px){.nav button.on .lbl{display:inline}}
+.nav .badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;line-height:18px;font-size:11px;padding:0 5px;box-shadow:0 0 0 2px var(--bg)}
 .nav button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .badge{min-width:20px;height:20px;border-radius:10px;padding:0 6px;font-size:12px;line-height:20px;text-align:center;background:var(--soft);color:var(--muted)}
-.nav .on .badge{background:rgba(255,255,255,.22);color:inherit}
 .badge.hot{background:var(--warn);color:#fff}
 
 /* Filter-Chips */
@@ -1588,7 +1590,7 @@ details ol{padding-left:20px;margin:6px 0}
  .dock{padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px))}
  .hide-m{display:none}.prog{height:11px;margin-bottom:6px}.prog.thin{height:6px}
  .dock .bar button.primary{flex:1}
- .nav button{padding:8px 14px;min-height:40px}}
+ .nav{gap:4px}.nav button{width:38px;height:38px;min-height:38px;font-size:18px}.nav button.on{width:38px;padding:0}}
 .wide{max-width:none}
 button.toggle.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 dialog{border:1px solid var(--line);border-radius:16px;padding:20px;background:var(--surface);color:var(--text,inherit);width:min(460px,calc(100vw - 32px));box-shadow:0 20px 60px rgba(0,0,0,.3)}
@@ -1653,6 +1655,16 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body><main>
 
+<div class="topbar"><nav class="nav" id="nav" aria-label="Bereiche">
+  <button data-v="sort" title="Sortieren" aria-label="Sortieren"><span class="ic">📥</span><span class="lbl">Sortieren</span><span class="badge hot" id="ns" hidden></span></button>
+  <button data-v="run" title="Läuft" aria-label="Läuft"><span class="ic">⚡</span><span class="lbl">Läuft</span><span class="badge live" id="nr" hidden></span></button>
+  <button data-v="hist" title="Verschoben" aria-label="Verschoben"><span class="ic">✅</span><span class="lbl">Verschoben</span><span class="badge" id="nh" hidden></span></button>
+  <button data-v="clean" title="Aufräumen" aria-label="Aufräumen"><span class="ic">🧹</span><span class="lbl">Aufräumen</span><span class="badge" id="nc" hidden></span></button>
+  <button data-v="ana" title="Analyse" aria-label="Analyse"><span class="ic">📊</span><span class="lbl">Analyse</span></button>
+  <button data-v="sched" title="Zeitplan" aria-label="Zeitplan"><span class="ic">⏰</span><span class="lbl">Zeitplan</span></button>
+  <button data-v="set" title="Einstellungen" aria-label="Einstellungen"><span class="ic">⚙️</span><span class="lbl">Einstellungen</span></button>
+</nav></div>
+
 <header class="hero">
   <span class="ver" title="Version und Prüfsumme der laufenden app.py">{{VERSION}}</span>
   <div class="brand"><span class="logo" aria-hidden="true">🎞️</span>
@@ -1666,15 +1678,6 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 </header>
 <div id="warn"></div>
 
-<nav class="nav" id="nav" aria-label="Bereiche">
-  <button data-v="sort">📥 Sortieren <span class="badge hot" id="ns" hidden></span></button>
-  <button data-v="run">⚡ Läuft <span class="badge live" id="nr" hidden></span></button>
-  <button data-v="hist">✅ Verschoben <span class="badge" id="nh" hidden></span></button>
-  <button data-v="clean">🧹 Aufräumen <span class="badge" id="nc" hidden></span></button>
-  <button data-v="ana">📊 Analyse</button>
-  <button data-v="sched">⏰ Zeitplan</button>
-  <button data-v="set">⚙️ Einstellungen</button>
-</nav>
 
 <section id="v-sort">
   <div class="bar">
