@@ -13,6 +13,7 @@ services:
       PUBLIC_URL: "https://media.p.pixelpotato.de"   # für Links in Telegram-Nachrichten
       AUTH_USER: "admin"           # Login der Web-UI (Basic Auth)
       AUTH_PASS: "bitte-aendern"   # leer lassen = kein Login
+      API_KEY: ""                  # optional: Schlüssel für pyLoad n Click (Passwörter weiterreichen), z. B. langer Zufallstext
       MIN_AGE: "120"               # Dateien/Ordner jünger als 120 s werden im Auto-Modus ignoriert
       WATCH_INTERVAL: "60"         # alle 60 s nach neuen Dateien und Problemen schauen (Telegram)
       MOVE_AFTER: "0"              # nur Startwert, danach in der Web-UI unter "Einstellungen" änderbar

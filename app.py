@@ -24,6 +24,7 @@ DATA = Path(os.environ.get("DATA_DIR", "/data"))
 PORT = int(os.environ.get("PORT", "8080"))
 AUTH_USER = os.environ.get("AUTH_USER", "admin")
 AUTH_PASS = os.environ.get("AUTH_PASS", "")   # leer = kein Login (z.B. wenn der Reverse Proxy schon schützt)
+API_KEY = os.environ.get("API_KEY", "")      # optional: erlaubt Skripten/Apps (z. B. pyLoad n Click) nur POST /api/hook, ohne Login
 MIN_AGE = int(os.environ.get("MIN_AGE", "120"))
 LOCKFILE = "/tmp/media-sorter.lock"
 VERSION = "1.1.0"
@@ -41,6 +42,7 @@ app = Flask(__name__)
 @app.before_request
 def basic_auth():
     if not AUTH_PASS: return
+    if API_KEY and request.path == "/api/hook" and hmac.compare_digest(request.headers.get("X-API-Key", "").encode(), API_KEY.encode()): return
     a = request.authorization
     if (a and hmac.compare_digest((a.username or "").encode(), AUTH_USER.encode())
             and hmac.compare_digest((a.password or "").encode(), AUTH_PASS.encode())):
@@ -900,6 +902,15 @@ def ex_password():
     if not pw.strip(): return jsonify(error="Bitte ein Passwort eingeben."), 400
     n = ex_set_password(pw, d.get("id") or None)
     return jsonify(n=n, **ex_payload())
+
+@app.post("/api/hook")
+def hook():
+    """Von außen (pyLoad n Click, Skript): {"password": "...", "name": "..."} merkt das Entpack-Passwort und sucht sofort nach Archiven."""
+    d = request.get_json(silent=True) or {}
+    pw, n = str(d.get("password") or "").strip(), 0
+    if pw: n = ex_set_password(pw)
+    extract_scan()
+    return jsonify(ok=True, retried=n, **ex_summary())
 
 @app.post("/api/extract/password/delete")
 def ex_password_delete():
