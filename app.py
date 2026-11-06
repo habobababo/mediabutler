@@ -305,9 +305,13 @@ def parse_ep(rel, anime=False, loose=False, explicit=False, stem=None):
     if m:
         r = _episode(stem, anime)
         if r:
-            t, y, sn, eps = r
-            if ctx_title and skey(t) == "" : t = ctx_title
-            return t, y, sn, eps
+            return r
+        if ctx_title:                               # Dateiname nur 'S01E02.mkv': Serie kommt aus dem Ordner
+            t, y = _title_year(ctx_title)
+            if t:
+                if m.group(1): sn, eps = int(m.group(1)), [int(m.group(2))] + [int(x) for x in re.findall(r"[Ee](\d{1,3})", m.group(3) or "")]
+                else: sn, eps = int(m.group(4)), [int(m.group(5))]
+                return t, y, sn, eps
     me = WORD_EP.search(stem)
     if me:
         ws = WORD_SEASON.search(stem)
@@ -435,6 +439,25 @@ def library_eps(show_dirs):
         out[sd] = {str(k): sorted(v) for k, v in res.items()}
     return out
 
+def _tags(stem, start=0):
+    """Qualitäts-Tags der Quelle ab dem ersten Treffer (z. B. 'german.dl.dv.hdr.2160p.web.h265-GRP'), Punkte bleiben erhalten."""
+    q = QUALITY.search(stem, start)
+    if not q: return ""
+    t = re.sub(r"\[[0-9A-Fa-f]{8}\]", " ", stem[q.start():])
+    t = re.sub(r"[\[\]{}()]+", " ", ILLEGAL.sub("", t))
+    return re.sub(r"\s+", " ", t).strip(" .-_")
+
+_GENERIC = {"movie", "film", "video", "main", "feature", "movies", "films"}
+def _dir_year(rel, title):
+    """Titel/Jahr/Ordnername aus dem nächsten Ordner, wenn der Dateiname kein Jahr hat und der Ordner zum Titel passt."""
+    for d in reversed(Path(rel).parts[:-1]):
+        t2, y2 = _title_year(d)
+        if t2 and not re.fullmatch(r"(?i)downloads?|incoming|complete|fertig|filme|movies?|serien|series|anime|tv|shows?|dokus?", t2):
+            k, k2 = skey(title), skey(t2)
+            if y2 and (not k or k in _GENERIC or k in k2 or k2 in k): return t2, y2, d
+            return "", "", ""
+    return "", "", ""
+
 def jf_target(rel, cat):
     """Jellyfin-Schema: Titel (Jahr)/Titel (Jahr).mkv  bzw.  Serie (Jahr)/Season 01/Serie (Jahr) S01E02.mkv"""
     name = Path(rel).name
@@ -449,19 +472,27 @@ def jf_target(rel, cat):
     if ep:
         title, year, season, eps = ep
         tag = ""
+        if not year:
+            t2, y2, _d = _dir_year(rel, title); year = y2
         r = rule_for(title)
         if r:
             title, year = r.get("name") or title, r.get("year", "")
             if r.get("tmdb"): tag = f" [tmdbid-{r['tmdb']}]"
         show = _safe(f"{title} ({year})" if year else title)
         es = f"S{season:02d}E{eps[0]:02d}" + "".join(f"-E{n:02d}" for n in eps[1:])
-        return Path(cat) / (show + tag) / f"Season {season:02d}" / f"{show} {es}{extra}{ext}"
+        m_ep = EPISODE.search(stem); tg = _tags(stem, m_ep.end() if m_ep else 0)
+        return Path(cat) / (show + tag) / f"Season {season:02d}" / f"{show} {es}{' - ' + tg if tg else ''}{extra}{ext}"
     if cat in ("Serien", "Anime"):           # keine Folgennummer erkennbar: Dateiname bleibt
         return Path(cat) / (_safe(_pretty(stem)) or "Unbekannt") / name
     title, year = _title_year(stem)
+    dname = ""
+    if not year or not title:
+        t2, y2, dname = _dir_year(rel, title)
+        if y2: title, year = t2, y2
     if title:
         base = _safe(f"{title} ({year})" if year else title)
-        return Path(cat) / base / f"{base}{extra}{ext}"
+        tg = _tags(stem) or (_tags(dname) if year and dname else "")
+        return Path(cat) / base / f"{base}{' - ' + tg if tg else ''}{extra}{ext}"
     return Path(cat) / name
 
 def default_target(rel, cat):
