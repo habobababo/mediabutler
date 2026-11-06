@@ -2005,6 +2005,124 @@ def dupes_delete():
         lib_invalidate()
     return jsonify(ok=True, deleted=len(gone), freed=freed, kept=kept, errors=errors)
 
+# ---------- Update aus GitHub (manuell per Knopf) ----------
+APP_FILE = Path(__file__).resolve()
+UPD_JSON = "update.json"
+upd_lock = threading.Lock()
+
+def upd_conf():
+    d = load(UPD_JSON, {}) or {}
+    return (d.get("repo") or os.environ.get("UPDATE_REPO") or "habobababo/mediabutler").strip().strip("/"), \
+           (d.get("token") or os.environ.get("UPDATE_TOKEN") or "").strip()
+
+def _gh(repo, path, token, raw=False):
+    h = {"Accept": "application/vnd.github.raw" if raw else "application/vnd.github+json",
+         "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "MediaButler"}
+    if token: h["Authorization"] = f"Bearer {token}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f"{os.environ.get('GITHUB_API', 'https://api.github.com')}/repos/{repo}/{path}", headers=h), timeout=30) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403): raise RuntimeError("GitHub lehnt den Zugriff ab. Token prüfen (Recht: Contents lesen, Repo ausgewählt).")
+        if e.code == 404: raise RuntimeError("Repo oder app.py nicht gefunden. Ohne Token ist ein privates Repo unsichtbar.")
+        raise RuntimeError(f"GitHub-Fehler {e.code}")
+    except (urllib.error.URLError, OSError) as e:
+        raise RuntimeError(f"GitHub nicht erreichbar: {getattr(e, 'reason', e)}")
+
+def _remote_app(repo, token):
+    data = _gh(repo, "contents/app.py?ref=main", token, raw=True)
+    try: compile(data, "app.py", "exec")
+    except SyntaxError as e: raise RuntimeError(f"Die geladene app.py ist fehlerhaft ({e.msg}, Zeile {e.lineno}). Nichts geändert.")
+    if b"Flask(" not in data or b"MediaButler" not in data: raise RuntimeError("Die geladene Datei sieht nicht nach MediaButler aus. Nichts geändert.")
+    return data
+
+def _ver_of(data):
+    m = re.search(rb'^VERSION = "([^"]+)"', data, re.M)
+    return m.group(1).decode() if m else "?"
+
+def _sha(b): return hashlib.sha256(b).hexdigest()
+
+def _write_app(data):
+    """Schreibt direkt in die Datei (ein einzeln eingebundenes app.py lässt sich nicht ersetzen) und sichert die alte Fassung."""
+    try:
+        old = APP_FILE.read_bytes()
+        DATA.mkdir(parents=True, exist_ok=True)
+        (DATA / "app.py.bak").write_bytes(old)
+        with open(APP_FILE, "wb") as f: f.write(data)
+    except OSError as e:
+        if e.errno == 30: raise RuntimeError("app.py ist schreibgeschützt eingebunden. Entferne in der docker-compose.yml bei ./app.py das „:ro“ und starte den Stack neu.")
+        raise RuntimeError(f"app.py nicht beschreibbar: {e}")
+
+def _restart_soon():
+    threading.Timer(1.5, lambda: os._exit(0)).start()      # restart: unless-stopped startet den Container neu
+
+@app.get("/api/update")
+def upd_info():
+    repo, token = upd_conf()
+    return jsonify(repo=repo, token_set=bool(token), version=VERSION, build=BUILD, backup=(DATA / "app.py.bak").exists(),
+                   writable=os.access(APP_FILE, os.W_OK))
+
+@app.post("/api/update/config")
+def upd_config():
+    b = request.get_json() or {}
+    d = load(UPD_JSON, {}) or {}
+    repo = (b.get("repo") or "").strip().strip("/")
+    if repo and not re.fullmatch(r"[\w.-]+/[\w.-]+", repo): return jsonify(error="Repo bitte als „besitzer/name“ angeben."), 400
+    d["repo"] = repo
+    if b.get("token") is not None and b["token"].strip(): d["token"] = b["token"].strip()
+    if b.get("clear_token"): d.pop("token", None)
+    save(UPD_JSON, d)
+    return jsonify(ok=True)
+
+@app.post("/api/update/check")
+def upd_check():
+    repo, token = upd_conf()
+    try:
+        data = _remote_app(repo, token)
+        info = {}
+        try:
+            c = json.loads(_gh(repo, "commits/main", token))
+            info = {"sha": c["sha"][:7], "msg": (c["commit"]["message"] or "").split("\n")[0], "date": c["commit"]["committer"]["date"][:16].replace("T", " ")}
+        except Exception: pass
+        same = _sha(data) == _sha(APP_FILE.read_bytes())
+        return jsonify(ok=True, current=same, remote_version=_ver_of(data), remote_build=_sha(data)[:7], pending=(_sha(APP_FILE.read_bytes())[:7] != BUILD), **info)
+    except RuntimeError as e:
+        return jsonify(error=str(e)), 502
+
+def _upd_blocked():
+    if busy() or qstate.get("active") or pending: return "Es läuft gerade ein Kopiervorgang. Bitte warten, bis er fertig ist."
+    return ""
+
+@app.post("/api/update/install")
+def upd_install():
+    with upd_lock:
+        why = _upd_blocked()
+        if why: return jsonify(error=why), 409
+        repo, token = upd_conf()
+        try:
+            data = _remote_app(repo, token)
+            if _sha(data) == _sha(APP_FILE.read_bytes()): return jsonify(ok=True, changed=False, restart=False)
+            _write_app(data)
+        except RuntimeError as e:
+            return jsonify(error=str(e)), 502
+        print(f"Update installiert: {VERSION} -> {_ver_of(data)} ({_sha(data)[:7]}), Neustart", file=sys.stderr)
+        _restart_soon()
+        return jsonify(ok=True, changed=True, restart=True, version=_ver_of(data), build=_sha(data)[:7])
+
+@app.post("/api/update/rollback")
+def upd_rollback():
+    bak = DATA / "app.py.bak"
+    if not bak.exists(): return jsonify(error="Keine Sicherung vorhanden."), 404
+    why = _upd_blocked()
+    if why: return jsonify(error=why), 409
+    try:
+        data = bak.read_bytes(); compile(data, "app.py", "exec")
+        _write_app(data)
+    except (RuntimeError, SyntaxError) as e:
+        return jsonify(error=str(e)), 500
+    _restart_soon()
+    return jsonify(ok=True, restart=True)
+
 @app.get("/api/history")
 def history():
     return jsonify(items=list(reversed(load("history.json", []))))
@@ -2686,6 +2804,16 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div id="rules"></div>
   </div>
   <div class="card">
+    <header><span class="ico">⬆️</span><div><h2>Update</h2><p class="sub" id="updsub">Holt die neueste app.py aus GitHub. Danach startet MediaButler neu.</p></div></header>
+    <div id="updwarn" class="banner warn" hidden></div>
+    <label class="l" for="updrepo">GitHub-Repo</label>
+    <input type="text" id="updrepo" class="mono" placeholder="habobababo/mediabutler" autocomplete="off" autocapitalize="off">
+    <label class="l" for="updtok">Token (nur bei privatem Repo nötig)</label>
+    <input id="updtok" class="mono" type="password" placeholder="github_pat_…" autocomplete="off">
+    <div class="bar"><button id="updsave">Speichern</button><button id="updchk" class="primary">🔍 Auf Updates prüfen</button><button id="updgo" class="primary" hidden>⬆️ Jetzt aktualisieren</button><button id="updback" hidden>↩️ Vorherige Version</button></div>
+    <div id="updres" class="sub"></div>
+  </div>
+  <div class="card">
     <header><span class="ico">🖥️</span><div><h2>System</h2><p class="sub">Wird in der docker-compose.yml festgelegt.</p></div></header>
     <div id="sysinfo"></div>
   </div>
@@ -3258,7 +3386,7 @@ function fillSettings(s){
     +kv("Zeitzone",esc(s.tz))+kv("Mindestalter",`${i.min_age} s`,"Jüngere Dateien ignoriert der Zeitplan, weil sie evtl. noch geschrieben werden")
     +kv("Neue Dateien prüfen",`alle ${i.watch} s`,"Telegram meldet sie, sobald sich zwei Prüfungen in Folge nicht mehr ändern")
     +kv("Login",i.auth?"aktiv":"aus","AUTH_USER und AUTH_PASS in der docker-compose.yml")+kv("Codec-Analyse",i.ffprobe?"ffprobe vorhanden":"ffprobe fehlt")}
-async function loadSched(){fillSettings(await api("/api/settings"));await loadRules();drawRules()}
+async function loadSched(){fillSettings(await api("/api/settings"));await loadRules();drawRules();loadUpd()}
 let pt;$("cron").oninput=()=>{drawPresets();clearTimeout(pt);pt=setTimeout(async()=>{
   const r=await api("/api/cron?expr="+encodeURIComponent($("cron").value));nextList(r.next||[],r.error)},300)};
 const collect=()=>({enabled:$("en").checked,cron:$("cron").value,move_after:$("mv").checked,cleanup_after:$("cu").checked,jellyfin:$("jf").checked,jf_scan:$("jfs").checked,jf_url:$("jfurl").value,jf_key:$("jfkey").value,jf_mode:$("jfmode").value,jf_root:$("jfroot").value,
@@ -3418,6 +3546,38 @@ $("ddel").onclick=async()=>{
     toast(`${r.deleted} gelöscht, ${fmt(r.freed)} frei`+(r.kept?`, in ${r.kept} Gruppe(n) blieb eine Datei`:""),r.errors.length?"bad":"ok");
     if(r.errors.length)toast(r.errors[0],"bad");
     dsel.clear();loadDup()}catch(e){toast(e.message,"bad");drawDupSel()}};
+
+/* Update */
+async function loadUpd(){
+  try{const u=await api("/api/update");
+    $("updrepo").value=u.repo;$("updtok").value="";$("updtok").placeholder=u.token_set?"gespeichert (zum Ändern neu eingeben)":"github_pat_…";
+    $("updback").hidden=!u.backup;$("updwarn").hidden=u.writable;
+    $("updwarn").innerHTML=u.writable?"":"⚠️ <span>app.py ist schreibgeschützt eingebunden. Entferne in der docker-compose.yml bei <code>./app.py</code> das <code>:ro</code> und starte den Stack einmal neu.</span>";
+    $("updsub").textContent=`Läuft: v${u.version} · ${u.build}. Holt die neueste app.py aus GitHub, danach startet MediaButler neu.`}catch{}}
+async function updSave(){await api("/api/update/config",{repo:$("updrepo").value,token:$("updtok").value});$("updtok").value="";await loadUpd()}
+$("updsave").onclick=async()=>{try{await updSave();toast("Gespeichert","ok")}catch(e){toast(e.message,"bad")}};
+$("updchk").onclick=async()=>{
+  $("updres").textContent="Prüfe …";$("updgo").hidden=true;$("updchk").disabled=true;
+  try{await updSave();const r=await api("/api/update/check",{});
+    const what=r.msg?` Letzte Änderung: „${r.msg}“ (${r.date}).`:"";
+    if(r.current){$("updres").textContent=r.pending?"Die Datei ist aktuell, aber der laufende Prozess noch nicht. Ein Neustart reicht.":"✅ Du hast die neueste Version (v"+r.remote_version+" · "+r.remote_build+")."+what;$("updgo").hidden=!r.pending;$("updgo").textContent=r.pending?"🔄 Neu starten":"⬆️ Jetzt aktualisieren"}
+    else{$("updres").textContent=`Neue Version verfügbar: v${r.remote_version} · ${r.remote_build}.${what}`;$("updgo").hidden=false;$("updgo").textContent="⬆️ Jetzt aktualisieren"}
+  }catch(e){$("updres").textContent="⚠️ "+e.message}
+  $("updchk").disabled=false};
+async function afterRestart(msg){
+  $("updres").textContent=msg;$("updgo").hidden=true;$("updback").hidden=true;$("updchk").disabled=true;
+  await new Promise(r=>setTimeout(r,2500));
+  for(let i=0;i<60;i++){try{const r=await fetch("/api/status",{cache:"no-store"});if(r.ok){location.reload();return}}catch{}await new Promise(r=>setTimeout(r,1000))}
+  $("updres").textContent="MediaButler antwortet noch nicht. Schau mit „docker logs mediabutler“ nach.";$("updchk").disabled=false}
+$("updgo").onclick=async()=>{
+  $("updgo").disabled=true;
+  try{const r=await api("/api/update/install",{});
+    if(!r.restart){$("updres").textContent="Schon aktuell.";$("updgo").hidden=true}else await afterRestart(`Installiert (v${r.version} · ${r.build}). Starte neu …`)}
+  catch(e){$("updres").textContent="⚠️ "+e.message;toast(e.message,"bad")}
+  $("updgo").disabled=false};
+$("updback").onclick=async()=>{
+  if(!confirm("Vorherige Version von app.py wiederherstellen und neu starten?"))return;
+  try{await api("/api/update/rollback",{});await afterRestart("Vorherige Version wiederhergestellt. Starte neu …")}catch(e){toast(e.message,"bad")}};
 
 const HV={clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",dup:"dup",ana:"ana",sched:"sched",set:"set"};
 function route(){const h=location.hash.slice(1);if(h==="clarify")filter="Klärung";show(HV[h]||"sort")}

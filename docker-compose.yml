@@ -21,4 +21,4 @@ services:
       - /mnt/share/media/downloads:/incoming   # Quelle
       - /mnt/share/media:/media                # Ziel (NFS bereits gemountet)
       - ./data:/data                           # Einstellungen + Verlauf
-      - ./app.py:/app/app.py:ro                # Update = app.py austauschen + restart
+      - ./app.py:/app/app.py                   # Update per Knopf in Einstellungen (muss beschreibbar sein, kein :ro)
