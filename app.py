@@ -1903,6 +1903,17 @@ def run_now():
     ok, msg = trigger("manuell (alle fertigen)")
     return (jsonify(ok=True, info=msg) if ok else (jsonify(error=msg), 409))
 
+_disk = {"t": 0.0, "v": None}
+def disk_info():
+    """Belegung des Zieldatenträgers (NFS-Share), 20 s zwischengespeichert."""
+    if time.time() - _disk["t"] < 20: return _disk["v"]
+    try:
+        u = shutil.disk_usage(TARGET)
+        v = {"total": u.total, "used": u.used, "free": u.free, "pct": round(u.used / max(1, u.used + u.free) * 100, 1), "path": str(TARGET)}
+    except OSError: v = None
+    _disk.update(t=time.time(), v=v)
+    return v
+
 @app.get("/api/status")
 def status():
     with lock:
@@ -1912,6 +1923,7 @@ def status():
     j["elapsed"] = (time.time() if j["running"] else (j["ended"] or time.time())) - j["started"] if j["started"] else 0
     j["schedule"] = schedule_info()
     j["extract"] = ex_summary()
+    j["disk"] = disk_info()
     with qcv: j["batches"] = len(pending)
     j["waiting"] = [{"id": b["id"], "source": b["source"], "files": len(b["items"]), "size": b["size"]} for b in waiting_batches()]
     return jsonify(j)
@@ -2308,7 +2320,12 @@ code,.path,input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,mon
 .pathchip{background:rgba(32,39,52,.45);color:#e0f8c7;border-radius:10px;padding:5px 10px;min-width:0;max-width:100%}
 .pathchip code{word-break:break-all;color:#e0f8c7}
 .ver{position:absolute;top:10px;right:16px;font-size:11.5px;color:rgba(255,255,255,.65);font-variant-numeric:tabular-nums}
-.stats{grid-column:2;grid-row:1 / span 2;display:flex;gap:10px}
+.stats{grid-column:2;grid-row:1 / span 3;display:flex;gap:10px}
+.hero .disk{grid-column:1;max-width:520px;font-size:13.5px}
+.disk .drow span,.disk .drow b{white-space:nowrap}.disk .drow{display:flex;justify-content:space-between;gap:12px;margin-bottom:5px;opacity:.9}.disk .drow b{font-weight:600}
+.disk .dbar{height:10px;border-radius:5px;background:rgba(224,248,199,.16);overflow:hidden}
+.disk .dbar i{display:block;height:100%;width:0;border-radius:5px;background:var(--ok);transition:width .4s}
+.disk.warn .dbar i{background:var(--warn)}.disk.bad .dbar i{background:var(--bad)}
 .stat{background:rgba(32,39,52,.45);border-radius:14px;padding:9px 14px;min-width:96px;display:flex;flex-direction:column-reverse}
 .stat b{display:block;font-size:24px;line-height:1.1;font-weight:800}.stat span{font-size:12px;color:rgba(255,255,255,.8);white-space:nowrap}
 .stat.alert{background:#b7d894}.stat.alert b,.stat.alert span{color:#202734}
@@ -2545,6 +2562,10 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div class="brand"><img class="logo" src="/icon-192.png" alt="" width="64" height="64">
     <div><h1>MediaButler</h1><div class="claim">Sortiert, entpackt und serviert deine Medien.</div></div></div>
   <div class="flow"><span class="pathchip" title="Quellordner">📥 <code id="src">…</code></span><span class="arrow" aria-hidden="true">➜</span><span class="pathchip" title="Ziel auf dem NFS-Share">🗄️ <code id="tgt">…</code></span></div>
+  <div class="disk" id="disk" hidden title="Belegung des Ziel-Speichers">
+    <div class="drow"><span>💾 Speicher</span><b id="disk-txt"></b></div>
+    <div class="dbar"><i id="disk-bar"></i></div>
+  </div>
   <div class="stats">
     <div class="stat"><span>📦 bereit</span><b id="st-ready">0</b></div>
     <div class="stat" id="st-clar-box"><span>❓ brauchen dich</span><b id="st-clar">0</b></div>
@@ -3475,9 +3496,12 @@ let wasRunning=false,lastDone=-1;
 const dlgOpen=()=>[...document.querySelectorAll("dialog")].some(d=>d.open);
 $("schgo").onclick=()=>show("sched");
 let exDone=-1;
+function drawDisk(d){const el=$("disk");el.hidden=!d;if(!d)return;
+  el.classList.toggle("warn",d.pct>=85&&d.pct<95);el.classList.toggle("bad",d.pct>=95);
+  $("disk-bar").style.width=d.pct+"%";$("disk-txt").textContent=`${d.pct.toFixed(0)} % belegt · ${fmt(d.free)} frei`;el.title=`${d.path}: ${fmt(d.used)} von ${fmt(d.total)} belegt`}
 async function poll(){try{
   const s=await api("/api/status");
-  running=s.running;
+  running=s.running;drawDisk(s.disk);
   const pct=s.total?Math.min(100,s.done/s.total*100):0;
   $("pt").style.width=pct+"%";$("pct").textContent=pct.toFixed(0)+" %";
   $("pf").style.width=(s.current_size?s.current_done/s.current_size*100:0)+"%";
