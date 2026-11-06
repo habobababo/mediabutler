@@ -515,7 +515,7 @@ def safe_source(rel):
         raise ValueError(f"Ungültiger Pfad: {rel}")
     return p
 
-SAMPLE = re.compile(r"\.samples?\.[^.]+$", re.I)    # film.sample.mkv / film.samples.mkv, aber nicht Free.Sample.2016.mkv
+SAMPLE = re.compile(r"sample", re.I)    # jede Datei mit „sample“ im Namen (film.sample.mkv, Movie-Sample.mkv, sample.mkv)
 def purge_samples(now_=False):
     """Löscht Sample-Dateien im Quellordner (nie im Ziel) und protokolliert sie. now_=True: sofort, ohne Wartezeit."""
     now = time.time()
