@@ -11,7 +11,7 @@ Umgebungsvariablen:
 
 CLI (z.B. für System-Cron):  python app.py --auto [--dry-run]
 """
-import base64, fcntl, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.request
+import base64, difflib, fcntl, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -1279,6 +1279,7 @@ def queue_worker():
                 if b in pending: pending.remove(b)
                 qstate["active"] = None
                 idle = not pending
+            lib_invalidate()
             if idle:
                 try: jf_after_queue()
                 except Exception as e: print("Jellyfin-Scan:", e, file=sys.stderr)
@@ -1337,10 +1338,16 @@ def announce_new(items):
         try: size += i["src"].stat().st_size
         except OSError: pass
     names = [f"• {i['src'].name}" for i in items[:6]] + ([f"… und {len(items) - 6} weitere"] if len(items) > 6 else [])
+    dups = 0
+    for i in items:
+        try: m = lib_match(i["dst"].as_posix(), i["src"].stat().st_size, 1)
+        except OSError: m = None
+        if m and m["n"]: dups += 1
     sch = schedule_info()
     when = f"⏰ Nächster Lauf: {sch['next']}" if sch["enabled"] and sch["next"] else "⏰ Zeitplan ist aus, bitte manuell starten"
     txt = (f"📥 MediaButler: {len(items)} neue Datei(en) bereit ({hsize(size)})\n"
            + ", ".join(f"{k} {v}" for k, v in cats.items()) + "\n" + "\n".join(names) + f"\n{when}")
+    if dups: txt += f"\n🔁 {dups} davon gibt es schon (oder ähnlich) in der Bibliothek"
     if ui_link("sort"): txt += f"\n👉 {ui_link('sort')}"
     notify(txt, "tg_new", wait=True)
 
@@ -1465,6 +1472,198 @@ def run_analysis(scope):
     finally:
         with an_lock: an.update(running=False, current="")
 
+# ---------- Duplikate in der Bibliothek & Abgleich der Neuzugänge ----------
+DUP_MIN_SIZE = 50 * 1024 * 1024          # gleiche Dateigröße zählt erst ab dieser Größe als Hinweis
+SIDECAR_EXT = {".srt", ".ass", ".sub", ".idx", ".nfo"}
+dp = {"running": False, "cancel": False, "total": 0, "done": 0, "current": "", "error": ""}
+dp_lock = threading.Lock()
+_NUMS = re.compile(r"\d+")
+_PART = re.compile(r"(?<![A-Za-z])(?:cd|part|pt|disc|disk|teil)[ ._-]*(\d{1,2})(?![\dA-Za-z])", re.I)
+_ARTICLE = re.compile(r"^(?:the|der|die|das|ein|eine|a|an|le|la|les|el)(?=.{4})")
+
+def media_id(rel, skip=1):
+    """Relativer Pfad -> (Typ, Schlüssel, Jahr, Extra, Anzeigename).
+    Typ "e" = Folge (Extra = (Staffel, Folgen)), "m" = Film (Extra = Teil-Nr. oder None).
+    skip = Anzahl führender Ordner, die keine Serie/Film benennen (Kategorie im Ziel)."""
+    p = Path(rel); stem = p.stem
+    dirs = list(p.parts[skip:-1]) if len(p.parts) - 1 > skip else []
+    ep = _episode(stem, "anime" in rel.lower())
+    if ep:
+        title, year, season, eps = ep
+        if not title:
+            t, _ = _ctx(dirs); title, year = _title_year(t or "")
+        if title:
+            return ("e", skey(title), year, (season, tuple(eps)),
+                    f"{title}{f' ({year})' if year else ''} S{season:02d}" + "".join(f"E{x:02d}" for x in eps))
+    title, year = _title_year(stem)
+    if not title or not skey(title):
+        t, _ = _ctx(dirs); title, year = _title_year(t or stem)
+    pm = _PART.search(stem)
+    return ("m", skey(title), year, int(pm.group(1)) if pm else None, f"{title}{f' ({year})' if year else ''}")
+
+def _cmp(k): return _ARTICLE.sub("", k)
+
+def _similar(a, b):
+    """Zwei Schlüssel (skey) sind fast gleich: gleiche Zahlen, sehr ähnlicher Text."""
+    a, b = _cmp(a), _cmp(b)
+    if a == b: return True
+    if _NUMS.findall(a) != _NUMS.findall(b) or min(len(a), len(b)) < 5: return False
+    sm = difflib.SequenceMatcher(None, a, b)
+    return sm.real_quick_ratio() >= .88 and sm.quick_ratio() >= .88 and sm.ratio() >= .88
+
+def _years_ok(y1, y2, exact):
+    if not y1 or not y2: return not exact
+    return int(y1) == int(y2) if exact else abs(int(y1) - int(y2)) <= 1
+
+def _compat(a, b):
+    """Passen zwei Medien-IDs zusammen? -> "exakt" | "ähnlich" | None"""
+    if a[0] != b[0] or a[3] != b[3]: return None
+    if a[1] == b[1] and a[2] == b[2]: return "exakt"
+    if a[1] == b[1] and (not a[2] or not b[2]): return "ähnlich"
+    if _years_ok(a[2], b[2], False) and _similar(a[1], b[1]): return "ähnlich"
+    return None
+
+def _walk_library():
+    for p in _walk_files(TARGET, SOURCE):
+        if p.suffix.lower() not in ANALYSIS_EXT or p.name.startswith(".") or SAMPLE.search(p.name): continue
+        try: st = p.stat()
+        except OSError: continue
+        yield p.relative_to(TARGET).as_posix(), st.st_size, int(st.st_mtime)
+
+def _enrich(rel, size, cache):
+    c = (cache or {}).get(rel)
+    return {"codec": c.get("codec", ""), "w": c.get("w", 0), "h": c.get("h", 0)} if c and c.get("s") == size else {"codec": "", "w": 0, "h": 0}
+
+def _find_groups(ents):
+    """ents: [{path,size,id,...}] -> Gruppen mit mindestens zwei Dateien."""
+    n = len(ents); par = list(range(n)); why = [set() for _ in range(n)]
+    def find(i):
+        while par[i] != i: par[i] = par[par[i]]; i = par[i]
+        return i
+    def union(i, j, reason):
+        a, b = find(i), find(j)
+        if a != b: par[b] = a; why[a] |= why[b]
+        why[a].add(reason)
+    ex = {}
+    for i, e in enumerate(ents): ex.setdefault(e["id"][:4], []).append(i)
+    for ids in ex.values():
+        for j in ids[1:]: union(ids[0], j, "Gleicher Titel")
+    by_size = {}
+    for i, e in enumerate(ents):
+        if e["size"] >= DUP_MIN_SIZE: by_size.setdefault((e["size"], e["id"][0], e["id"][3]), []).append(i)   # Teil-Nr. bzw. Folge muss passen
+    for ids in by_size.values():
+        for j in ids[1:]: union(ids[0], j, "Gleiche Dateigröße")
+    reps = sorted({find(i) for i in range(n)})      # ähnliche Titel: je Gruppe ein Vertreter, Filme nach Jahr, Folgen nach Staffel/Folge gebündelt
+    ms, by_year, eps_b = [], {}, {}
+    for r in reps:
+        t, _k, y, x, _n = ents[r]["id"]
+        if t == "m": ms.append(r); by_year.setdefault(y, []).append(r)
+        else: eps_b.setdefault(x, []).append(r)
+    for y, lst in by_year.items():
+        cand = ms if not y else lst + by_year.get("", []) + by_year.get(str(int(y) - 1), []) + by_year.get(str(int(y) + 1), [])
+        for r in lst:
+            for q in cand:
+                if q != r and find(q) != find(r) and _compat(ents[r]["id"], ents[q]["id"]): union(r, q, "Ähnlicher Titel")
+    for lst in eps_b.values():
+        for x in range(len(lst)):
+            for y2 in range(x + 1, len(lst)):
+                if find(lst[x]) != find(lst[y2]) and _compat(ents[lst[x]]["id"], ents[lst[y2]]["id"]): union(lst[x], lst[y2], "Ähnlicher Titel")
+    groups = {}
+    for i in range(n): groups.setdefault(find(i), []).append(i)
+    return [(idx, why[r]) for r, idx in groups.items() if len(idx) > 1]
+
+def run_dupes():
+    with dp_lock: dp.update(running=True, cancel=False, total=0, done=0, current="", error="")
+    try:
+        if not TARGET.is_dir(): raise RuntimeError(f"{TARGET} nicht erreichbar")
+        cache = (load("analysis_target.json", {}) or {}).get("files", {})
+        files = []
+        for rel, size, mt in _walk_library():
+            files.append((rel, size, mt))
+            if len(files) % 25 == 0:
+                with dp_lock: dp.update(total=len(files), current=Path(rel).parent.as_posix())
+            if dp["cancel"]: raise RuntimeError("Abgebrochen")
+        with dp_lock: dp.update(total=len(files), done=len(files), current="Vergleiche …")
+        ents = []
+        for rel, size, mt in files:
+            ents.append({"path": rel, "size": size, "m": mt, "id": media_id(rel), **_enrich(rel, size, cache)})
+        groups = []
+        for idx, why in _find_groups(ents):
+            fs = sorted((ents[i] for i in idx), key=lambda e: (-(e["h"] or 0), -e["size"], e["path"]))
+            keep = fs[0]["path"]
+            exact = bool(why & {"Gleicher Titel", "Gleiche Dateigröße"})
+            order = [r for r in ("Gleicher Titel", "Gleiche Dateigröße", "Ähnlicher Titel") if r in why]
+            names = Counter(e["id"][4] for e in fs).most_common(2)
+            groups.append({"label": names[0][0], "type": "Folge" if fs[0]["id"][0] == "e" else "Film", "level": "exakt" if exact else "ähnlich",
+                           "reasons": order, "keep": keep, "waste": sum(e["size"] for e in fs) - fs[0]["size"],
+                           "files": [{"path": e["path"], "size": e["size"], "m": e["m"], "codec": e["codec"], "w": e["w"], "h": e["h"]} for e in fs]})
+        groups.sort(key=lambda g: (g["level"] != "exakt", -g["waste"]))
+        save("dupes.json", {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "files": len(files), "groups": groups})
+    except Exception as e:
+        with dp_lock: dp["error"] = str(e)
+    finally:
+        with dp_lock: dp.update(running=False, current="")
+
+# Abgleich: liegt ein Neuzugang (oder etwas Ähnliches) schon in der Bibliothek?
+LIB_TTL = int(os.environ.get("LIB_INDEX_TTL", "300"))
+lib_idx = {"ts": 0.0, "data": None, "busy": False, "memo": {}}
+lib_lock = threading.Lock()
+
+def _build_lib_index():
+    try:
+        if not TARGET.is_dir(): return
+        ents = [{"path": rel, "size": size, "id": media_id(rel)} for rel, size, _m in _walk_library()]
+        data = {"all": ents, "size": {}, "m": {}, "e": {}}
+        for e in ents:
+            if e["size"] >= DUP_MIN_SIZE: data["size"].setdefault(e["size"], []).append(e)
+            t, _k, y, x, _n = e["id"]
+            if t == "e": data["e"].setdefault(x, []).append(e)
+            else: data["m"].setdefault(e["id"][2], []).append(e)
+        with lib_lock: lib_idx.update(data=data, ts=time.time(), memo={})
+    except Exception as ex: print("Bibliotheks-Index:", ex, file=sys.stderr)
+    finally:
+        with lib_lock: lib_idx["busy"] = False
+
+def lib_invalidate():
+    with lib_lock: lib_idx["ts"] = 0.0
+
+def lib_index():
+    """Zwischengespeicherter Bibliotheks-Index (wird im Hintergrund erneuert). None, solange er noch nicht fertig ist."""
+    with lib_lock:
+        if time.time() - lib_idx["ts"] > LIB_TTL and not lib_idx["busy"]:
+            lib_idx["busy"] = True
+            threading.Thread(target=_build_lib_index, daemon=True).start()
+        return lib_idx["data"]
+
+def lib_match(rel, size, skip=0, limit=3):
+    """Treffer für einen Neuzugang: [{path,size,level,why}] (leer = nichts Ähnliches da). None = Index noch nicht bereit."""
+    idx = lib_index()
+    if idx is None: return None
+    mid = media_id(rel, skip)
+    mk = (mid[:4], size)
+    with lib_lock:
+        if mk in lib_idx["memo"]: return lib_idx["memo"][mk]
+    found = {}
+    def add(e, level, why):
+        cur = found.get(e["path"])
+        if cur is None or (level == "exakt" and cur["level"] != "exakt"):
+            found[e["path"]] = {"path": e["path"], "size": e["size"], "level": level, "why": why}
+    if size >= DUP_MIN_SIZE:
+        for e in idx["size"].get(size, []):
+            if e["id"][0] == mid[0] and e["id"][3] == mid[3]: add(e, "exakt", "Gleiche Dateigröße")
+    if mid[0] == "e": pool = idx["e"].get(mid[3], [])
+    else:
+        y = mid[2]
+        pool = idx["all"] if not y else [e for yy in (y, "", str(int(y) - 1), str(int(y) + 1)) for e in idx["m"].get(yy, [])]
+    for e in pool:
+        if e["id"][0] != mid[0]: continue
+        c = _compat(mid, e["id"])
+        if c: add(e, c, "Gleicher Titel" if c == "exakt" else "Ähnlicher Titel")
+    res = sorted(found.values(), key=lambda m: (m["level"] != "exakt", m["path"]))
+    out = {"level": res[0]["level"] if res else "", "n": len(res), "items": res[:limit]}
+    with lib_lock: lib_idx["memo"][mk] = out
+    return out
+
 # ---------- API ----------
 _sm = {}
 def schedule_info():
@@ -1500,11 +1699,14 @@ def files():
         if p.is_file() and p.suffix.lower() in VIDEO_EXT and not SAMPLE.search(p.name):
             rel = p.relative_to(SOURCE).as_posix(); cat = guess_category(rel)
             if hidden_rel(rel) or ex_blocked(rel, bl): continue
-            out.append({"path": rel, "size": p.stat().st_size, "category": cat, "target": target_for(rel, cat).as_posix() if cat else "",
-                        "series": series_info(rel), "copied": is_copied(cm, p, rel), "busy": rel in busy_src})
+            size, cp = p.stat().st_size, is_copied(cm, p, rel)
+            tgt = target_for(rel, cat).as_posix() if cat else ""
+            dup = None if cp or rel in busy_src else lib_match(tgt or rel, size, 1 if tgt else 0)
+            out.append({"path": rel, "size": size, "category": cat, "target": tgt,
+                        "series": series_info(rel), "copied": cp, "busy": rel in busy_src, "dup": dup})
     shows = {show_dir(f["target"]) for f in out if f["series"] and f["target"]}
     return jsonify(library=library_eps(shows), files=out, categories=CATEGORIES, source=str(SOURCE), target=str(TARGET), target_mounted=TARGET.is_dir(),
-                   extracting=ex_summary())
+                   extracting=ex_summary(), dupidx=lib_idx["data"] is not None)
 
 @app.get("/api/rules")
 def rules_get():
@@ -1722,6 +1924,86 @@ def analysis_results():
     d = load(f"analysis_{scope}.json", {}) or {}
     return jsonify(ts=d.get("ts", ""), scope=scope, root=str(analysis_root(scope)),
                    items=[{"path": k, **v} for k, v in d.get("files", {}).items()])
+
+@app.get("/api/dupes")
+def dupes_get():
+    with dp_lock: j = dict(dp)
+    d = load("dupes.json", {}) or {}
+    g = d.get("groups", [])
+    return jsonify(**j, ts=d.get("ts", ""), scanned=d.get("files", 0), groups=g, root=str(TARGET), mounted=TARGET.is_dir(),
+                   waste=sum(x["waste"] for x in g))
+
+@app.post("/api/dupes/start")
+def dupes_start():
+    if not TARGET.is_dir(): return jsonify(error="Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?"), 400
+    with dp_lock:
+        if dp["running"]: return jsonify(error="Es läuft bereits ein Scan."), 409
+        dp.update(running=True, cancel=False, total=0, done=0, current="", error="")
+    threading.Thread(target=run_dupes, daemon=True).start()
+    return jsonify(ok=True)
+
+@app.post("/api/dupes/cancel")
+def dupes_cancel():
+    dp["cancel"] = True; return jsonify(ok=True)
+
+def _rm_sidecars(p):
+    try:
+        for s in p.parent.iterdir():
+            if s.is_file() and s.suffix.lower() in SIDECAR_EXT and (s.stem == p.stem or s.stem.startswith(p.stem + ".")):
+                try: s.unlink()
+                except OSError: pass
+    except OSError: pass
+
+def _rm_empty_parents(p):
+    d = p.parent
+    while d != TARGET and len(d.relative_to(TARGET).parts) >= 2:
+        try:
+            if any(d.iterdir()): break
+            d.rmdir()
+        except OSError: break
+        d = d.parent
+
+@app.post("/api/dupes/delete")
+def dupes_delete():
+    """Löscht markierte Dateien aus der Bibliothek. Nur Dateien aus dem letzten Duplikat-Scan, und pro Gruppe bleibt immer mindestens eine."""
+    rels = list(dict.fromkeys(((request.get_json() or {}).get("items") or [])[:5000]))
+    d = load("dupes.json", {}) or {}
+    groups = d.get("groups", [])
+    sel = {r for r in rels if any(r == f["path"] for g in groups for f in g["files"])}
+    kept = 0
+    for g in groups:
+        paths = [f["path"] for f in g["files"]]
+        if paths and all(x in sel for x in paths):
+            sel.discard(g["keep"] if g["keep"] in paths else paths[0]); kept += 1
+    root = os.path.realpath(TARGET)
+    gone, errors, freed = [], [], 0
+    for r in rels:
+        if r not in sel: continue
+        try:
+            p = TARGET / r
+            if os.path.realpath(p.parent) != root and not os.path.realpath(p.parent).startswith(root + os.sep): raise ValueError("liegt außerhalb der Bibliothek")
+            if p.suffix.lower() not in ANALYSIS_EXT: raise ValueError("keine Videodatei")
+            if not p.is_file(): raise ValueError("Datei nicht gefunden")
+            size = p.stat().st_size
+            p.unlink(); freed += size; gone.append(r)
+            _rm_sidecars(p); _rm_empty_parents(p)
+            print("Aus Bibliothek gelöscht (Duplikat):", r, file=sys.stderr)
+        except (ValueError, OSError) as e:
+            errors.append(f"{r}: {e}")
+    if gone:
+        g2 = set(gone); out = []
+        for g in groups:
+            fs = [f for f in g["files"] if f["path"] not in g2]
+            if len(fs) < 2: continue
+            if not any(f["path"] == g["keep"] for f in fs): g["keep"] = fs[0]["path"]
+            g["files"] = fs; g["waste"] = sum(f["size"] for f in fs) - next(f["size"] for f in fs if f["path"] == g["keep"])
+            out.append(g)
+        d["groups"] = out; save("dupes.json", d)
+        for scope in ("target",):
+            a = load(f"analysis_{scope}.json", {}) or {}
+            if g2 & set(a.get("files", {})): a["files"] = {k: v for k, v in a["files"].items() if k not in g2}; save(f"analysis_{scope}.json", a)
+        lib_invalidate()
+    return jsonify(ok=True, deleted=len(gone), freed=freed, kept=kept, errors=errors)
 
 @app.get("/api/history")
 def history():
@@ -2086,6 +2368,14 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 @media (max-width:720px){
  .astats{grid-template-columns:1fr 1fr}.tile.save{grid-column:1/-1}
  .crow{grid-template-columns:auto 1fr auto;gap:6px 10px}.crow span:nth-child(2){display:none}.crow small{display:none}}
+.dupl{margin-top:6px;display:flex;flex-direction:column;gap:3px;align-items:flex-start;font-size:13px}
+.dupm{line-height:1.35;word-break:break-all}.dupm code{font-size:12.5px}
+.dg{padding:14px 16px;max-width:none}.dgh{display:flex;justify-content:space-between;gap:6px 14px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.dgf{display:flex;gap:12px;align-items:flex-start;padding:10px 8px;border-top:1px solid var(--line);cursor:pointer;border-radius:10px}
+.dgf.sel{background:color-mix(in srgb,var(--bad) 14%,var(--surface))}
+.dgf input{margin-top:3px;flex:none}.dgi{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dgn{font-weight:600;word-break:break-word}.dgp{color:var(--muted);word-break:break-all;font-size:12.5px;background:none;padding:0}
+.dgm{font-size:13px;color:var(--muted)}#dk-dup .row{margin-bottom:8px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body><main>
 
@@ -2095,6 +2385,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <button data-v="ext" title="Entpacken" aria-label="Entpacken"><span class="ic">📦</span><span class="lbl">Entpacken</span><span class="badge" id="ne" hidden></span></button>
   <button data-v="hist" title="Verschoben" aria-label="Verschoben"><span class="ic">✅</span><span class="lbl">Verschoben</span><span class="badge" id="nh" hidden></span></button>
   <button data-v="clean" title="Aufräumen" aria-label="Aufräumen"><span class="ic">🧹</span><span class="lbl">Aufräumen</span><span class="badge" id="nc" hidden></span></button>
+  <button data-v="dup" title="Duplikate" aria-label="Duplikate"><span class="ic">🔁</span><span class="lbl">Duplikate</span><span class="badge" id="nd" hidden></span></button>
   <button data-v="ana" title="Analyse" aria-label="Analyse"><span class="ic">📊</span><span class="lbl">Analyse</span></button>
   <button data-v="sched" title="Zeitplan" aria-label="Zeitplan"><span class="ic">⏰</span><span class="lbl">Zeitplan</span></button>
   <button data-v="set" title="Einstellungen" aria-label="Einstellungen"><span class="ic">⚙️</span><span class="lbl">Einstellungen</span></button>
@@ -2257,6 +2548,30 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div id="cempty2" class="empty" hidden><div class="big">✨</div><b>Blitzblank</b>Der Quellordner ist leer.</div></div>
 </section>
 
+<section id="v-dup" hidden>
+  <p class="sub" style="margin-bottom:12px">Sucht in der Bibliothek nach Dateien, die doppelt oder fast gleich vorhanden sind: gleicher Titel, gleiche Dateigröße oder ähnlicher Name. Der Scan läuft nur, wenn du ihn startest. Gelöscht wird nur, was du markierst.</p>
+  <div class="bar"><button class="primary" id="dstart">🔁 Duplikate suchen</button><button id="dstop" class="danger" hidden>Abbrechen</button><span id="dmeta" class="sub"></span></div>
+  <div id="dmount" class="banner bad" hidden>⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>
+  <div id="derr" class="banner bad" hidden></div>
+  <div id="dprog" class="card wide" hidden>
+    <div class="row"><span id="dtxt"></span><b id="dpct"></b></div>
+    <div class="prog run"><i id="dpb" style="width:100%"></i></div>
+  </div>
+  <div id="dempty" class="empty card wide" hidden><div class="big">🔁</div><b id="det">Noch kein Scan</b><span id="des"></span></div>
+  <div id="dbody" hidden>
+    <div class="astats">
+      <div class="tile"><span class="sub">Gruppen</span><b id="d-g">0</b></div>
+      <div class="tile"><span class="sub">Dateien betroffen</span><b id="d-f">0</b></div>
+      <div class="tile save"><span>Doppelt belegter Platz</span><b id="d-w">0</b><span>wenn pro Gruppe nur eine Datei bleibt</span></div>
+    </div>
+    <div class="bar"><div class="chips" id="dfilter"></div></div>
+    <div class="bar"><button id="dmarkall">☑️ Vorschlag markieren</button><button id="dmarknone">⬜ Keine</button>
+      <span class="sub">Der Vorschlag behält je Gruppe die Datei mit der höchsten Auflösung, bei Gleichstand die größte.</span></div>
+    <div id="dlist"></div>
+    <div class="bar"><button id="dmore" hidden>Mehr anzeigen</button></div>
+  </div>
+</section>
+
 <section id="v-ana" hidden>
   <p class="sub" style="margin-bottom:12px">Welche Video-Codecs liegen bei dir, und wie viel Platz würde H.265 theoretisch sparen? Es werden nur die Kopfdaten der Dateien gelesen, nichts wird verändert.</p>
   <div class="bar"><div class="chips" id="ascope"></div></div>
@@ -2383,6 +2698,8 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div class="prog thin run"><i id="pf"></i></div></div>
   <div id="dk-tot" hidden><div class="row"><span id="txt"></span><b id="pct">0 %</b></div>
   <div class="prog" id="ptw"><i id="pt"></i></div></div>
+  <div id="dk-dup" hidden><div class="row"><span id="dsel">Nichts markiert</span></div>
+  <div class="bar"><button class="danger" id="ddel" disabled>🗑 Markierte löschen</button></div></div>
   <div class="bar"><button class="primary" id="go">Auswahl kopieren</button><button id="stop" class="danger" hidden>Abbrechen</button></div>
   <div class="err" id="err"></div>
 </div></div>
@@ -2407,10 +2724,10 @@ async function copyText(t,btn){
 
 let view="sort",files=[],cats=[],filter="Alle",hist=[],running=false;
 function show(v){view=v;try{history.replaceState(null,"",v==="sort"?location.pathname+location.search:"#"+v)}catch{}
-  for(const s of["sort","run","ext","hist","clean","ana","sched","set"])$("v-"+s).hidden=s!==v;
+  for(const s of["sort","run","ext","hist","clean","dup","ana","sched","set"])$("v-"+s).hidden=s!==v;
   $("nav").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
-  $("go").hidden=v!=="sort";
-  ({sort:loadFiles,run:()=>api("/api/status").then(renderRun),ext:loadExt,hist:loadHist,clean:loadClean,ana:loadAna,sched:loadSched,set:loadSched})[v]()}
+  $("go").hidden=v!=="sort";$("dk-dup").hidden=v!=="dup";document.querySelector(".dock .sched").hidden=v==="dup";
+  ({sort:loadFiles,run:()=>api("/api/status").then(renderRun),ext:loadExt,hist:loadHist,clean:loadClean,dup:loadDup,ana:loadAna,sched:loadSched,set:loadSched})[v]()}
 $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
 
 
@@ -2614,23 +2931,27 @@ function drawRules(){
     <button class="danger" data-r="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Serien gemerkt.</p>';
   $("rules").querySelectorAll("button").forEach(b=>b.onclick=async()=>{
     try{rulesCache=(await api("/api/rules/delete",{key:rulesCache[b.dataset.r].key})).rules;drawRules();toast("Entfernt","ok")}catch(e){toast(e.message,"bad")}})}
+const dupN=()=>files.filter(f=>f.dup&&f.dup.n).length;
+const dupTags=f=>{const d=f.dup;if(!d||!d.n)return"";const ex=d.level==="exakt";
+  return `<div class="dupl"><span class="tag ${ex?"bad":"warn"}">${ex?"🔁 Schon in der Bibliothek":"≈ Ähnliches vorhanden"}</span>`
+    +d.items.map(m=>`<div class="dupm"><code>${esc(m.path)}</code> <span class="sub">${fmt(m.size)}${m.level!=="exakt"?" · ähnlich":""}</span></div>`).join("")
+    +(d.n>d.items.length?`<div class="sub">+ ${d.n-d.items.length} weitere</div>`:"")+`</div>`};
 function tabs(){
-  const u=unclearN();
+  const u=unclearN(),dn=dupN();
   if(filter==="Klärung"&&!u)filter="Alle";
-  $("tabs").hidden=!u;
-  $("tabs").innerHTML=(u?["Klärung"]:[]).map(c=>{
-    const n=c==="Alle"?files.length:c==="Klärung"?u:files.filter(f=>f.category===c).length;
-    const label=c==="Klärung"?"❓ Braucht dich":(ICON[c]?ICON[c]+" ":"")+c;
-    return `<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":c}" ${c==="Klärung"?'data-k="1"':""}>${label} <i>${n}</i></button>`}).join("");
-  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=filter==="Klärung"?"Alle":"Klärung";tabs();render()});
+  if(filter==="Doppelt"&&!dn)filter="Alle";
+  const kinds=[...(u?["Klärung"]:[]),...(dn?["Doppelt"]:[])];
+  $("tabs").hidden=!kinds.length;
+  $("tabs").innerHTML=kinds.map(c=>`<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":"Alle"}" data-k="${c}">${c==="Klärung"?"❓ Braucht dich":"🔁 Schon da?"} <i>${c==="Klärung"?u:dn}</i></button>`).join("");
+  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=filter===b.dataset.k?"Alle":b.dataset.k;tabs();render()});
   stats();seriesBar()}
 let fqs="";
 const hay=f=>(f.path+" "+(f.series?f.series.name+" "+f.series.orig:"")+" "+(f.target||"")).toLowerCase();
-const visible=()=>files.filter(f=>(filter==="Alle"||(filter==="Klärung"?!f.category:f.category===filter))&&(!fqs||fqs.every(w=>hay(f).includes(w))));
+const visible=()=>files.filter(f=>(filter==="Alle"||(filter==="Klärung"?!f.category:filter==="Doppelt"?!!(f.dup&&f.dup.n):f.category===filter))&&(!fqs||fqs.every(w=>hay(f).includes(w))));
 const catOpts=(first)=>`<option value="">${first}</option>`+cats.map(c=>`<option value="${c}">${ICON[c]} ${c}</option>`).join("");
 function row(f,short,extra="",cls=""){const i=files.indexOf(f),name=short&&f.path.includes("/")?f.path.slice(f.path.indexOf("/")+1):f.path;return `<tr class="${cls}" data-cat="${esc(f.category)}">
    <td class="chk"><input type="checkbox" data-i="${i}" ${checked(f)?"checked":""} aria-label="markieren"></td>
-   <td class="f" title="${esc(f.path)}">${esc(name)}${extra}</td>
+   <td class="f" title="${esc(f.path)}">${esc(name)}${extra}${dupTags(f)}</td>
    <td class="c"><select class="cat" data-i="${i}" aria-label="Kategorie">${f.category?"":'<option value="" selected>Kategorie wählen…</option>'}${cats.map(c=>`<option value="${c}" ${c===f.category?"selected":""}>${ICON[c]} ${c}</option>`).join("")}</select></td>
    <td class="t">${f.category?esc(f.target):'<span class="tag warn">❓ Unklar</span> Wohin gehört das?'}</td><td class="s">${fmt(f.size)}</td></tr>`}
 function refreshGroups(){
@@ -3025,7 +3346,80 @@ async function poll(){try{
   if(!s.running)lastDone=-1;
   wasRunning=s.running}catch{}}
 setInterval(poll,1000);
-const HV={clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",ana:"ana",sched:"sched",set:"set"};
+/* Duplikate */
+let dres=null,dsel=new Set(),dshow=40,dfilter="Alle",dtimer,dWas=false;
+const dIc={Film:"🎬",Folge:"📺"};
+async function loadDup(){
+  const r=await api("/api/dupes");dres=r;
+  const known=new Set(r.groups.flatMap(g=>g.files.map(f=>f.path)));dsel=new Set([...dsel].filter(p=>known.has(p)));
+  setBadge("nd",r.groups.length);
+  if(r.running){dWas=true;dupPoll()}
+  drawDup()}
+function dupPoll(){clearTimeout(dtimer);dtimer=setTimeout(async()=>{
+  if(view!=="dup")return;
+  try{const r=await api("/api/dupes");
+    if(r.running){dres=Object.assign(dres||{},{running:true,total:r.total,done:r.done,current:r.current});drawDupProg();dupPoll()}
+    else if(dWas){dWas=false;toast(r.error?"Scan fehlgeschlagen":"Duplikat-Scan fertig",r.error?"bad":"ok");loadDup()}}catch{dupPoll()}},1000)}
+function drawDupProg(){const r=dres;
+  $("dprog").hidden=!r.running;$("dstop").hidden=!r.running;$("dstart").disabled=r.running||!r.mounted;
+  $("dtxt").textContent=r.current==="Vergleiche …"?"Vergleiche …":`${r.total} Dateien gelesen${r.current?": "+r.current:""}`;
+  $("dpct").textContent="";$("derr").hidden=!r.error;$("derr").textContent=r.error?"⚠️ "+r.error:""}
+const dSize=()=>new Map(dres.groups.flatMap(g=>g.files.map(f=>[f.path,f.size])));
+function drawDupSel(){
+  const sz=dSize(),n=dsel.size,tot=[...dsel].reduce((a,p)=>a+(sz.get(p)||0),0);
+  const full=dres.groups.filter(g=>g.files.every(f=>dsel.has(f.path))).length;
+  $("dsel").textContent=n?`${n} markiert · ${fmt(tot)} werden frei`+(full?` · ⚠️ In ${full} Gruppe(n) ist alles markiert, dort bleibt eine Datei`:""):"Nichts markiert";
+  $("ddel").disabled=!n}
+function dupFile(g,f){
+  const keep=f.path===g.keep,parts=f.path.split("/"),name=parts.pop(),dir=dres.root.replace(/\/$/,"")+"/"+parts.join("/");
+  const q=[f.codec,f.h?`${f.w}×${f.h}`:""].filter(Boolean).join(" · "),on=dsel.has(f.path);
+  return `<label class="dgf${on?" sel":""}"><input type="checkbox" data-p="${esc(f.path)}" ${on?"checked":""} aria-label="markieren">
+    <span class="dgi"><span class="dgn">${esc(name)} ${keep?'<span class="tag ok">⭐ Vorschlag: behalten</span>':""}</span>
+    <code class="dgp">${esc(dir)}</code>
+    <span class="dgm"><b>${fmt(f.size)}</b>${q?" · "+esc(q):""} · ${new Date(f.m*1000).toLocaleDateString("de-DE")}</span></span></label>`}
+function dupGroup(g,gi){const ex=g.level==="exakt";
+  return `<div class="card wide dg"><div class="dgh"><div><b>${dIc[g.type]||""} ${esc(g.label)}</b> <span class="tag ${ex?"bad":"warn"}">${ex?"Exakt":"Ähnlich"}</span>
+    ${g.reasons.map(x=>`<span class="tag">${esc(x)}</span>`).join(" ")}</div>
+    <div class="sub">${g.files.length} Dateien · doppelt belegt <b>${fmt(g.waste)}</b></div></div>
+    ${g.files.map(f=>dupFile(g,f)).join("")}
+    <div class="bar" style="margin:8px 0 0"><button data-rest="${gi}">☑️ Alle außer Vorschlag markieren</button></div></div>`}
+function drawDup(){
+  const r=dres,gs=r.groups,has=gs.length>0;
+  drawDupProg();$("dmount").hidden=r.mounted;
+  $("dmeta").textContent=r.ts?`Letzter Scan ${fdate(r.ts)}: ${r.scanned} Dateien in ${r.root}`:r.root;
+  $("dempty").hidden=has||r.running;$("dbody").hidden=!has;
+  if(!has){const done=!!r.ts;$("det").textContent=done?"Keine Duplikate gefunden":"Noch kein Scan";
+    $("des").textContent=done?`${r.scanned} Dateien geprüft, nichts ist doppelt oder ähnlich.`:"Starte den Scan, um doppelte und ähnliche Dateien zu finden.";drawDupSel();return}
+  $("d-g").textContent=gs.length;$("d-f").textContent=gs.reduce((a,g)=>a+g.files.length,0);$("d-w").textContent=fmt(r.waste);
+  const cnt={Alle:gs.length,exakt:gs.filter(g=>g.level==="exakt").length,ähnlich:gs.filter(g=>g.level!=="exakt").length};
+  if(dfilter!=="Alle"&&!cnt[dfilter])dfilter="Alle";
+  $("dfilter").innerHTML=[["Alle","Alle"],["exakt","🔴 Exakt"],["ähnlich","🟡 Ähnlich"]].filter(([k])=>k==="Alle"||cnt[k]).map(([k,l])=>
+    `<button class="chip ${k===dfilter?"on":""}" data-c="Alle" data-f="${k}">${l} <i>${cnt[k]}</i></button>`).join("");
+  $("dfilter").querySelectorAll("button").forEach(b=>b.onclick=()=>{dfilter=b.dataset.f;dshow=40;drawDup()});
+  const list=gs.map((g,gi)=>[g,gi]).filter(([g])=>dfilter==="Alle"||(dfilter==="exakt")===(g.level==="exakt"));
+  $("dlist").innerHTML=list.slice(0,dshow).map(([g,gi])=>dupGroup(g,gi)).join("");
+  $("dmore").hidden=list.length<=dshow;$("dmore").textContent=`Mehr anzeigen (${list.length-dshow} weitere)`;
+  drawDupSel()}
+$("dlist").addEventListener("change",e=>{const c=e.target.closest("input[data-p]");if(!c)return;
+  c.checked?dsel.add(c.dataset.p):dsel.delete(c.dataset.p);c.closest(".dgf").classList.toggle("sel",c.checked);drawDupSel()});
+$("dlist").addEventListener("click",e=>{const b=e.target.closest("button[data-rest]");if(!b)return;
+  const g=dres.groups[b.dataset.rest];g.files.forEach(f=>f.path===g.keep?dsel.delete(f.path):dsel.add(f.path));drawDup()});
+$("dmarkall").onclick=()=>{dres.groups.filter(g=>dfilter==="Alle"||(dfilter==="exakt")===(g.level==="exakt")).forEach(g=>g.files.forEach(f=>{if(f.path!==g.keep)dsel.add(f.path)}));drawDup()};
+$("dmarknone").onclick=()=>{dsel.clear();drawDup()};
+$("dmore").onclick=()=>{dshow+=40;drawDup()};
+$("dstart").onclick=async()=>{try{await api("/api/dupes/start",{});dWas=true;toast("Scan gestartet","ok");loadDup()}catch(e){toast(e.message,"bad")}};
+$("dstop").onclick=async()=>{await api("/api/dupes/cancel",{})};
+$("ddel").onclick=async()=>{
+  const sz=dSize(),list=[...dsel];if(!list.length)return;
+  const names=list.slice(0,6).map(p=>"• "+p).join("\n")+(list.length>6?`\n… und ${list.length-6} weitere`:"");
+  if(!confirm(`${list.length} Datei(en) (${fmt(list.reduce((a,p)=>a+(sz.get(p)||0),0))}) endgültig aus der Bibliothek löschen?\n\n${names}\n\nPro Gruppe bleibt mindestens eine Datei erhalten. Das lässt sich nicht rückgängig machen. Jellyfin merkt die Änderung beim nächsten Bibliotheks-Scan.`))return;
+  $("ddel").disabled=true;
+  try{const r=await api("/api/dupes/delete",{items:list});
+    toast(`${r.deleted} gelöscht, ${fmt(r.freed)} frei`+(r.kept?`, in ${r.kept} Gruppe(n) blieb eine Datei`:""),r.errors.length?"bad":"ok");
+    if(r.errors.length)toast(r.errors[0],"bad");
+    dsel.clear();loadDup()}catch(e){toast(e.message,"bad");drawDupSel()}};
+
+const HV={clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",dup:"dup",ana:"ana",sched:"sched",set:"set"};
 function route(){const h=location.hash.slice(1);if(h==="clarify")filter="Klärung";show(HV[h]||"sort")}
 window.addEventListener("hashchange",route);
 const dockEl=document.querySelector(".dock");
@@ -3033,6 +3427,7 @@ new ResizeObserver(()=>{document.querySelector("main").style.paddingBottom=dockE
 route();poll();
 api("/api/history").then(r=>{setBadge("nh",r.items.length);$("st-hist").textContent=r.items.length});
 api("/api/leftovers").then(r=>setBadge("nc",r.dirs.length));
+api("/api/dupes").then(r=>setBadge("nd",r.groups.length)).catch(()=>{});
 </script></body></html>"""
 
 def cli():
