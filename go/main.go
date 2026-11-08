@@ -1,10 +1,8 @@
 package main
 
 import (
-	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,6 +28,9 @@ func main() {
 	minAge, _ := strconv.Atoi(env("MIN_AGE", "120"))
 	a := &App{Store: NewStore(env("DATA_DIR", "/data")), source: src, target: tgt, minAge: time.Duration(minAge) * time.Second,
 		user: env("AUTH_USER", "admin"), pass: env("AUTH_PASS", ""), apiKey: env("API_KEY", ""), version: version}
+	if b, err := os.ReadFile(exePath()); err == nil {
+		a.build = sha7(b)[:7]
+	}
 	a.qcond = sync.NewCond(&a.qmu)
 	a.ex = &exState{m: map[string]*exEntry{}}
 	a.dp, a.an, a.lib = &dupState{}, &anState{Scope: "target"}, &libIndex{memo: map[string]M{}}
@@ -119,24 +120,14 @@ func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	get := func(p string, h http.HandlerFunc) { mux.HandleFunc("GET "+p, h) }
 	post := func(p string, h http.HandlerFunc) { mux.HandleFunc("POST "+p, h) }
-	notYet := func(w http.ResponseWriter, r *http.Request) {
-		js(w, 501, M{"error": "In der Go-Version noch nicht verfügbar."})
-	}
-	for _, p := range []string{"/api/update", "/api/meta"} {
-		get(p, notYet)
-	}
-	for _, p := range []string{"/api/update/config", "/api/update/check", "/api/update/install", "/api/update/rollback",
-		"/api/meta/config", "/api/meta/search"} {
-		post(p, notYet)
-	}
-
+	a.updRoutes(get, post)
 	a.exRoutes(get, post)
 	a.dupRoutes(get, post)
+	a.metaRoutes(get, post)
 	a.notifyRoutes(post)
 
 	page, _ := webFS.ReadFile("web/page.html")
-	sum := sha256.Sum256(page)
-	build := hex.EncodeToString(sum[:])[:7]
+	build := a.build
 	get("/{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")

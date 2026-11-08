@@ -55,6 +55,7 @@ type App struct {
 	user, pass     string
 	apiKey         string
 	version        string
+	build          string
 
 	mu  sync.Mutex // schützt job
 	job jobState
