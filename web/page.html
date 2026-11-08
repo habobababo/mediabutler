@@ -303,6 +303,10 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 
 a.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:12px;border:1px solid var(--line);background:var(--soft);color:var(--ink);font-weight:600;text-decoration:none;min-height:38px}
 a.btn:hover{border-color:var(--brand)}
+#v-set .card,#v-set .card.wide{max-width:820px;width:100%}
+.sact{display:inline-flex;gap:12px;align-items:center}
+.fupd{padding:5px 12px;min-height:34px;border-radius:999px;background:var(--soft);border:1px solid var(--line);font-size:13.5px}
+.fupd.new{background:var(--brand);color:var(--brand-ink);border-color:var(--brand);box-shadow:0 0 0 3px rgba(139,212,156,.25)}
 /* ===== Überarbeitung: Kopfbereich, Navigation, Ruhe ===== */
 .hero{display:grid;grid-template-columns:1fr auto;gap:16px 24px;align-items:center;padding:18px 22px;border-radius:18px;margin-bottom:18px;
  background:radial-gradient(900px 220px at 0% 0%,rgba(139,212,156,.16),transparent 60%),radial-gradient(700px 220px at 100% 100%,rgba(143,184,255,.12),transparent 60%),var(--surface);
@@ -744,7 +748,7 @@ button.primary{box-shadow:0 3px 12px rgba(139,212,156,.22)}
 </main>
 
 <div class="dock"><div>
-  <div class="sched"><span id="sch"></span><button class="link" id="schgo">Ändern</button></div>
+  <div class="sched"><span id="sch"></span><span class="sact"><button id="fupd" class="fupd" title="Auf Updates prüfen und installieren">⬆️ <span class="hide-m">Update</span></button><button class="link" id="schgo">Ändern</button></span></div>
   <div id="dk-run" hidden><div class="row"><span id="cur">Bereit</span><b id="spd"></b></div>
   <div class="prog thin run"><i id="pf"></i></div></div>
   <div id="dk-tot" hidden><div class="row"><span id="txt"></span><b id="pct">0 %</b></div>
@@ -1660,6 +1664,22 @@ $("updgo").onclick=async()=>{
 $("updback").onclick=async()=>{
   if(!confirm("Vorherige Version von app.py wiederherstellen und neu starten?"))return;
   try{await api("/api/update/rollback",{});await afterRestart("Vorherige Version wiederhergestellt. Starte neu …")}catch(e){toast(e.message,"bad")}};
+
+/* Update-Knopf im Footer */
+let updNew=false;
+async function updProbe(quiet){const b=$("fupd");
+  try{const r=await api("/api/update/check",{});updNew=!r.current||!!r.pending;
+    b.classList.toggle("new",updNew);b.innerHTML=updNew?`⬆️ <span>Update${r.remote_version?" v"+esc(r.remote_version):""} verfügbar</span>`:'⬆️ <span class="hide-m">Update</span>';
+    if(!quiet&&!updNew)toast("Du hast die neueste Version","ok");return r}
+  catch(e){if(!quiet)toast(e.message,"bad")}}
+$("fupd").onclick=async()=>{const b=$("fupd");b.disabled=true;
+  try{let r=updNew?{}:await updProbe(false);
+    if(updNew&&confirm("Update jetzt installieren? MediaButler startet danach neu.")){
+      const i=await api("/api/update/install",{});
+      if(i.restart)await afterRestart(`Installiert (v${i.version} · ${i.build}). Starte neu …`);else toast("Schon aktuell","ok")}
+  }catch(e){toast(e.message,"bad")}
+  b.disabled=false};
+setTimeout(()=>updProbe(true),4000);setInterval(()=>updProbe(true),6*3600*1000);
 
 const HV={dl:"dl",lmatch:"lmatch",clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",dup:"dup",ana:"ana",sched:"sched",set:"set"};
 function route(){const h=location.hash.slice(1);if(h==="clarify")filter="Klärung";show(HV[h]||"sort")}
