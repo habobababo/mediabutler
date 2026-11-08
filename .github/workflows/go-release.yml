@@ -1,7 +1,9 @@
 name: go-release
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: ["**.go", "go.mod", "go.sum", "vendor/**", "web/**", ".github/workflows/go-release.yml"]
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,6 +23,9 @@ jobs:
         run: go test ./...
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ github.run_number }}
+          name: Build ${{ github.run_number }} (${{ github.sha }})
+          target_commitish: ${{ github.sha }}
           files: |
             mediabutler-linux-amd64
             mediabutler-linux-arm64

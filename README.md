@@ -24,6 +24,6 @@ Einstellungen und Verlauf liegen als JSON in `./data`.
 Die Web-Oberfläche liegt in `web/page.html`. `testdata/golden.json` enthält Referenzfälle für die Benennung.
 
 ## Update-Knopf
-`git tag v1.2.0 && git push --tags` startet `.github/workflows/go-release.yml` (Tests, Build für amd64 und arm64, Release).
+Jeder Push auf `main` mit Code-Änderungen startet `.github/workflows/go-release.yml` (Tests, Build für amd64 und arm64, neues Release `v<Laufnummer>`).
 Der Knopf in den Einstellungen lädt das passende Asset `mediabutler-linux-<arch>`, sichert die alte Datei (`DATA_DIR/mediabutler.bak`), ersetzt das Programm und beendet es; `restart: unless-stopped` startet den Container neu.
 Ein neues Image (`docker compose build`) ersetzt solche Updates wieder. Für ein privates Repo braucht der Knopf ein Token mit Lesezugriff auf Contents.

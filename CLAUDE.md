@@ -6,7 +6,7 @@ Self-hosted Web-Tool in Go (stdlib + regexp2), das Downloads in Filme, Serien, A
 - `docker compose up -d --build` (Image enthält ffmpeg und 7zz).
 - Pfade: Quelle `/mnt/share/media/downloads` -> `/incoming`, Ziel `/mnt/share/media` -> `/media`, Einstellungen in `./data` -> `/data`.
 - Umgebungsvariablen: SOURCE_DIR, TARGET_DIR, DATA_DIR, PUBLIC_URL, AUTH_USER/AUTH_PASS, API_KEY, MIN_AGE, WATCH_INTERVAL, MOVE_AFTER.
-- Update: Release-Tag pushen (`v*`), dann Update-Knopf in den Einstellungen.
+- Update: auf `main` pushen (Workflow baut das Release), dann Update-Knopf in den Einstellungen.
 
 ## Aufbau
 - `main.go` Routen, Auth, eingebettete UI (`web/`); `handlers.go` API; `engine.go` Scan, Warteschlange, Kopier-Job, Aufräumen.
