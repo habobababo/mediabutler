@@ -657,6 +657,9 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <p class="sub">Gespeichert werden Login-Cookies automatisch. Du kannst auch den Cookie-Header aus dem Browser einfügen (z. B. <code>xfss=…</code>).</p>
     <div id="dl-ck" class="sub"></div>
     <input id="dl-ckh" placeholder="Host, z. B. ddownload.com" style="width:100%"><textarea id="dl-ckv" rows="2" class="mono" placeholder="Cookie-Header: name=wert; name2=wert2" style="width:100%;margin-top:6px"></textarea>
+    <h3 style="margin:14px 0 4px">🩺 Link testen</h3>
+    <p class="sub">Prüft einen ddownload-Link Schritt für Schritt und zeigt die Antworten des Servers (ohne API-Key). Praktisch, wenn ein Download nicht startet.</p>
+    <input id="dl-diag" class="mono" placeholder="https://ddownload.com/…" style="width:100%"><div class="bar"><button id="dldiag">🩺 Testen</button></div><pre id="dl-diagout" class="mono" style="white-space:pre-wrap;word-break:break-word;font-size:12.5px"></pre>
     <div class="bar"><button class="primary" id="dlsave">💾 Speichern</button><button id="dltest">🔌 Zugang testen</button><span id="dlmsg" class="sub"></span></div>
     <p class="sub" style="margin-top:10px">Click'n'Load: Port <code id="dlcnl">9666</code> veröffentlichen oder das Chrome-Plugin aus dem Ordner <code>chrome-extension/</code> nutzen (leitet Click'n'Load an diesen Server um).</p>
   </div>
@@ -822,6 +825,7 @@ async function saveDl(){accT=0;const b={dir:$("dl-dir").value,parallel:+$("dl-pa
   $("dl-key").value="";$("dl-pass").value="";dlBusy=false;await loadDl(true)}
 $("dlsave").onclick=async()=>{try{await saveDl();toast("Gespeichert","ok")}catch(e){toast(e.message,"bad")}};
 $("dltest").onclick=async()=>{$("dlmsg").textContent="Teste …";try{await saveDl();const r=await api("/api/dl/login",{});$("dlmsg").textContent=r.ok?"✅ "+r.info:"⚠️ "+r.error;loadDl(true)}catch(e){$("dlmsg").textContent="⚠️ "+e.message}};
+$("dldiag").onclick=async()=>{const o=$("dl-diagout");o.textContent="Teste …";try{await saveDl();const r=await api("/api/dl/diagnose",{url:$("dl-diag").value});o.textContent=r.steps.map(x=>(x.ok?"✅ ":"⛔ ")+x.step+": "+x.detail).join("\n\n")}catch(e){o.textContent="Fehler: "+e.message}};
 $("dl-ck").onclick=async e=>{const h=e.target.dataset.ckdel;if(h){await api("/api/dl/cookies/clear",{host:h});loadDl(true)}};
 let dlTick=0;setInterval(()=>{dlTick++;if(view==="dl"||dlTick%4===0)loadDl()},1500);
 /* Entpacken */

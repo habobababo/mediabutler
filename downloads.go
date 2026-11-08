@@ -387,19 +387,33 @@ func (d *dlManager) resolveDD(ctx context.Context, it *DLItem, conf DLConf) (*re
 		return nil, fmt.Errorf("Datei-Code in der ddownload-URL nicht erkannt.")
 	}
 	code := m[1]
+	var errs []string
 	if conf.DDKey != "" {
 		r, err := d.ddViaAPI(ctx, conf.DDKey, code)
 		if err == nil {
 			return r, nil
 		}
+		errs = append(errs, err.Error())
 		// Datei gehört nicht zum eigenen Account ("No file"): erst Klon im eigenen Account, dann Login-Weg
-		if cr, err2 := d.ddViaClone(ctx, conf.DDKey, code); err2 == nil {
+		cr, err2 := d.ddViaClone(ctx, conf.DDKey, code)
+		if err2 == nil {
 			return cr, nil
 		}
-		if conf.DDLogin == "" || conf.DDPass == "" {
-			return nil, err
-		}
+		errs = append(errs, "Klon: "+err2.Error())
 	}
+	if conf.DDLogin != "" && conf.DDPass != "" || conf.DDKey == "" {
+		r, err := d.ddViaWeb(ctx, code, conf)
+		if err == nil {
+			return r, nil
+		}
+		errs = append(errs, "Login-Weg: "+err.Error())
+	} else {
+		errs = append(errs, "kein Login hinterlegt")
+	}
+	return nil, fmt.Errorf("%s", strings.Join(errs, " | "))
+}
+
+func (d *dlManager) ddViaWeb(ctx context.Context, code string, conf DLConf) (*resolved, error) {
 	// Login/Cookies: Seite laden, Direktlink suchen
 	u, _ := url.Parse(ddBase)
 	has := false
@@ -1058,6 +1072,11 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 		}
 		js(w, 200, M{"ok": true, "info": "Login ok, Cookies gespeichert"})
 	})
+	post("/api/dl/diagnose", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		js(w, 200, M{"steps": d.diagnose(ctx, str(body(r)["url"]))})
+	})
 	post("/api/dl/cookies/clear", func(w http.ResponseWriter, r *http.Request) {
 		d.jar.clear(strings.ToLower(str(body(r)["host"])))
 		js(w, 200, M{"ok": true})
@@ -1243,4 +1262,111 @@ func (d *dlManager) summary() M {
 		pct = float64(done) * 100 / float64(size)
 	}
 	return M{"active": active, "waiting": waiting, "done": done, "size": size, "speed": speed, "pct": pct, "name": name}
+}
+
+// diagnose prüft einen ddownload-Link Schritt für Schritt und liefert die Rohantworten (ohne Key) zurück.
+func (d *dlManager) diagnose(ctx context.Context, link string) []M {
+	conf := d.conf()
+	out := []M{}
+	add := func(step string, ok bool, detail string) {
+		out = append(out, M{"step": step, "ok": ok, "detail": detail})
+	}
+	mask := func(s string) string {
+		if conf.DDKey != "" {
+			s = strings.ReplaceAll(s, conf.DDKey, "***")
+		}
+		return s
+	}
+	cut := func(s string, n int) string {
+		s = strings.Join(strings.Fields(s), " ")
+		if len(s) > n {
+			s = s[:n] + " …"
+		}
+		return s
+	}
+	pu, err := url.Parse(strings.TrimSpace(link))
+	m := []string(nil)
+	if err == nil {
+		m = reDDCode.FindStringSubmatch(pu.Path)
+	}
+	if m == nil {
+		add("Datei-Code", false, "In der URL wurde kein 12-stelliger Code gefunden: "+link)
+		return out
+	}
+	code := m[1]
+	add("Datei-Code", true, code)
+	raw := func(u string) (int, string, error) {
+		resp, err := d.get(ctx, d.noRedir, u)
+		if err != nil {
+			return 0, "", err
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return resp.StatusCode, string(b), nil
+	}
+	if conf.DDKey == "" {
+		add("API-Key", false, "Kein API-Key hinterlegt, nur der Login-Weg wird geprüft.")
+	} else {
+		for _, ep := range []string{"file/info", "file/direct_link"} {
+			st, body, err := raw(fmt.Sprintf("%s/%s?key=%s&file_code=%s", ddAPI, ep, url.QueryEscape(conf.DDKey), code))
+			if err != nil {
+				add("API "+ep, false, mask(err.Error()))
+				continue
+			}
+			ok := st == 200 && regexp.MustCompile(`"status"\s*:\s*200`).MatchString(body)
+			add("API "+ep, ok, fmt.Sprintf("HTTP %d: %s", st, mask(cut(body, 400))))
+		}
+	}
+	if conf.DDLogin == "" || conf.DDPass == "" {
+		add("Login-Weg", false, "Kein Benutzername/Passwort hinterlegt.")
+		return out
+	}
+	u, _ := url.Parse(ddBase)
+	hasCookie := false
+	for _, c := range d.jar.Cookies(u) {
+		if c.Name == "xfss" {
+			hasCookie = true
+		}
+	}
+	if !hasCookie {
+		if err := d.ddLogin(ctx, conf); err != nil {
+			add("Login", false, err.Error())
+			return out
+		}
+		add("Login", true, "angemeldet, Cookie gespeichert")
+	} else {
+		add("Login", true, "gespeicherter Cookie vorhanden")
+	}
+	resp, err := d.get(ctx, d.noRedir, ddBase+"/"+code)
+	if err != nil {
+		add("Seite laden", false, err.Error())
+		return out
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	resp.Body.Close()
+	txt := string(b)
+	title := ""
+	if mm := regexp.MustCompile(`(?is)<title>(.*?)</title>`).FindStringSubmatch(txt); mm != nil {
+		title = cut(html.UnescapeString(mm[1]), 120)
+	}
+	marks := []string{}
+	for _, k := range []string{"download2", "method_premium", "/d/", "Cloudflare", "captcha", "File Not Found", "No such file", "login", "Premium"} {
+		if strings.Contains(txt, k) {
+			marks = append(marks, k)
+		}
+	}
+	add("Seite laden", resp.StatusCode < 400, fmt.Sprintf("HTTP %d, Location: %q, Titel: %q, enthält: %s", resp.StatusCode, resp.Header.Get("Location"), title, strings.Join(marks, ", ")))
+	if r, err := d.ddViaWeb(ctx, code, conf); err != nil {
+		add("Direktlink über Login", false, err.Error())
+	} else {
+		add("Direktlink über Login", true, "Link gefunden: "+cut(reDirectHost(r.url), 80))
+	}
+	return out
+}
+
+func reDirectHost(u string) string {
+	if pu, err := url.Parse(u); err == nil {
+		return pu.Scheme + "://" + pu.Host + "/…"
+	}
+	return "ok"
 }
