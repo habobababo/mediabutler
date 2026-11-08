@@ -11,7 +11,7 @@ Umgebungsvariablen:
 
 CLI (z.B. für System-Cron):  python app.py --auto [--dry-run]
 """
-import base64, difflib, fcntl, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.request
+import base64, difflib, fcntl, hashlib, hmac, json, os, re, shutil, subprocess, sys, threading, time, urllib.error, urllib.parse, urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -236,6 +236,17 @@ def _pretty(s):
 def _safe(s):
     return ILLEGAL.sub("", s).strip(" .")
 
+def id_norm(v):
+    """'12609', 'tmdb:12609', 'tmdbid-12609' -> '12609' (TMDB, wie bisher gespeichert); 'tvdb:81189' -> 'tvdb:81189'; sonst ''."""
+    m = re.fullmatch(r"\s*(?:(tmdb|tvdb)(?:id)?\s*[:\-_ ]?\s*)?(\d{1,10})\s*", str(v or ""), re.I)
+    if not m: return ""
+    return f"tvdb:{m.group(2)}" if (m.group(1) or "").lower() == "tvdb" else m.group(2)
+
+def id_tag(v):
+    """Jellyfin-Ordnerzusatz: ' [tmdbid-12609]' bzw. ' [tvdbid-81189]'"""
+    n = id_norm(v)
+    return "" if not n else (f" [tvdbid-{n[5:]}]" if n.startswith("tvdb:") else f" [tmdbid-{n}]")
+
 def _title_year(s):
     """'Blade.Runner.2049.2017.1080p' -> ('Blade Runner 2049', '2017')"""
     s = _pretty(s)
@@ -380,7 +391,7 @@ def mg_build(d):
     for r in rels: safe_source(r)
     name = _safe(_pretty((d.get("name") or "").strip()))
     year = re.sub(r"\D", "", str(d.get("year") or ""))[:4]
-    tmdb = re.sub(r"\D", "", str(d.get("tmdb") or ""))[:10]
+    tmdb = id_norm(d.get("tmdb"))
     cat = d.get("category")
     if not rels: raise ValueError("Keine Dateien ausgewählt.")
     if not name: raise ValueError("Bitte einen Namen eingeben.")
@@ -404,7 +415,7 @@ def mg_build(d):
 
 def mg_path(rel, cat, g):
     show = _safe(f"{g['name']} ({g['year']})" if g.get("year") else g["name"])
-    tag = f" [tmdbid-{g['tmdb']}]" if g.get("tmdb") else ""
+    tag = id_tag(g.get("tmdb"))
     return Path(cat) / (show + tag) / f"Season {g['season']:02d}" / f"{show} S{g['season']:02d}E{g['ep']:02d}{Path(rel).suffix.lower()}"
 
 def series_info(rel):
@@ -477,7 +488,7 @@ def jf_target(rel, cat):
         r = rule_for(title)
         if r:
             title, year = r.get("name") or title, r.get("year", "")
-            if r.get("tmdb"): tag = f" [tmdbid-{r['tmdb']}]"
+            tag = id_tag(r.get("tmdb"))
         show = _safe(f"{title} ({year})" if year else title)
         es = f"S{season:02d}E{eps[0]:02d}" + "".join(f"-E{n:02d}" for n in eps[1:])
         m_ep = EPISODE.search(stem); tg = _tags(stem, m_ep.end() if m_ep else 0)
@@ -1749,7 +1760,7 @@ def rules_set():
     detected = (d.get("detected") or "").strip()
     name = _safe(_pretty((d.get("name") or "").strip()))
     year = re.sub(r"\D", "", str(d.get("year") or ""))[:4]
-    tmdb = re.sub(r"\D", "", str(d.get("tmdb") or ""))[:10]
+    tmdb = id_norm(d.get("tmdb"))
     cat = d.get("category") if d.get("category") in CATEGORIES else ""
     if not detected or not skey(detected): return jsonify(error="Erkannter Name fehlt."), 400
     if not name: return jsonify(error="Bitte einen Namen eingeben."), 400
@@ -1771,7 +1782,7 @@ def series_preview():
     d = request.get_json() or {}
     name = _safe(_pretty((d.get("name") or "").strip()))
     year = re.sub(r"\D", "", str(d.get("year") or ""))[:4]
-    tmdb = re.sub(r"\D", "", str(d.get("tmdb") or ""))[:10]
+    tmdb = id_norm(d.get("tmdb"))
     cat = d.get("category") if d.get("category") in CATEGORIES else "Serien"
     out = []
     for e in (d.get("samples") or [])[:500]:
@@ -1780,7 +1791,7 @@ def series_preview():
         _, _, sn, eps = ep
         show = f"{name} ({year})" if year else name
         es = f"S{sn:02d}E{eps[0]:02d}" + "".join(f"-E{n:02d}" for n in eps[1:])
-        out.append((Path(cat) / (show + (f" [tmdbid-{tmdb}]" if tmdb else "")) / f"Season {sn:02d}" / f"{show} {es}{Path(e['path']).suffix.lower()}").as_posix())
+        out.append((Path(cat) / (show + id_tag(tmdb)) / f"Season {sn:02d}" / f"{show} {es}{Path(e['path']).suffix.lower()}").as_posix())
     return jsonify(targets=out)
 
 @app.post("/api/preview")
@@ -2166,6 +2177,143 @@ def upd_rollback():
     _restart_soon()
     return jsonify(ok=True, restart=True)
 
+# ---------- Metadaten-Quellen (TMDB, TVDB, AniList, Jikan/MyAnimeList) ----------
+META_JSON = "meta.json"
+META_NAMES = {"tmdb": "TMDB", "tvdb": "TVDB", "anilist": "AniList", "jikan": "MyAnimeList"}
+TMDB_API = os.environ.get("TMDB_API", "https://api.themoviedb.org/3")
+TVDB_API = os.environ.get("TVDB_API", "https://api4.thetvdb.com/v4")
+ANILIST_API = os.environ.get("ANILIST_API", "https://graphql.anilist.co")
+JIKAN_API = os.environ.get("JIKAN_API", "https://api.jikan.moe/v4")
+_tvdb_tok = {"key": "", "t": "", "exp": 0.0}
+
+def meta_conf():
+    d = load(META_JSON, {}) or {}
+    on = d.get("on") or {}
+    return {"tmdb_key": (d.get("tmdb_key") or os.environ.get("TMDB_KEY") or "").strip(),
+            "tvdb_key": (d.get("tvdb_key") or os.environ.get("TVDB_KEY") or "").strip(),
+            "on": {k: bool(on.get(k, True)) for k in META_NAMES}}
+
+def _http_json(url, data=None, headers=None, timeout=8):
+    h = {"User-Agent": "MediaButler", "Accept": "application/json", **(headers or {})}
+    body = None
+    if data is not None: body = json.dumps(data).encode(); h["Content-Type"] = "application/json"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=body, headers=h), timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403): raise PermissionError("API-Key ungültig oder abgelehnt")
+        if e.code == 429: raise RuntimeError("zu viele Anfragen, kurz warten")
+        raise RuntimeError(f"Fehler {e.code}")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise RuntimeError(f"nicht erreichbar ({getattr(e, 'reason', e)})")
+
+def _hit(src, title, orig, year, kind, overview, idval="", rid=""):
+    return {"src": src, "title": (title or orig or "").strip(), "orig": (orig or "").strip(), "year": str(year or "")[:4], "kind": kind,
+            "overview": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", overview or "")).strip()[:180], "idval": idval, "id": str(rid)}
+
+def _s_tmdb(q, kind, year, c):
+    key = c["tmdb_key"]
+    if not key: raise PermissionError("kein API-Key hinterlegt")
+    ep = {"tv": "search/tv", "anime": "search/tv", "movie": "search/movie"}.get(kind, "search/multi")
+    params, hdr = {"query": q, "language": "de-DE", "include_adult": "false"}, {}
+    if len(key) > 40: hdr["Authorization"] = f"Bearer {key}"       # v4-Lesetoken
+    else: params["api_key"] = key
+    if year and ep != "search/multi": params["year" if ep.endswith("movie") else "first_air_date_year"] = year
+    out = []
+    for r in (_http_json(f"{TMDB_API}/{ep}?{urllib.parse.urlencode(params)}", headers=hdr).get("results") or [])[:8]:
+        mt = r.get("media_type") or ("movie" if ep.endswith("movie") else "tv")
+        if mt not in ("tv", "movie"): continue
+        tv = mt == "tv"
+        out.append(_hit("tmdb", r.get("name" if tv else "title"), r.get("original_name" if tv else "original_title"),
+                        r.get("first_air_date" if tv else "release_date"), "Serie" if tv else "Film", r.get("overview"), str(r["id"]), r["id"]))
+    return out
+
+def _tvdb_token(key, fresh=False):
+    if not fresh and _tvdb_tok["t"] and _tvdb_tok["key"] == key and time.time() < _tvdb_tok["exp"]: return _tvdb_tok["t"]
+    j = _http_json(f"{TVDB_API}/login", data={"apikey": key})
+    _tvdb_tok.update(key=key, t=(j.get("data") or {}).get("token", ""), exp=time.time() + 20 * 86400)
+    if not _tvdb_tok["t"]: raise PermissionError("Anmeldung bei TVDB fehlgeschlagen")
+    return _tvdb_tok["t"]
+
+def _s_tvdb(q, kind, year, c):
+    key = c["tvdb_key"]
+    if not key: raise PermissionError("kein API-Key hinterlegt")
+    params = {"query": q, "type": "movie" if kind == "movie" else "series", "limit": 8}
+    if year: params["year"] = year
+    url = f"{TVDB_API}/search?{urllib.parse.urlencode(params)}"
+    try: j = _http_json(url, headers={"Authorization": f"Bearer {_tvdb_token(key)}"})
+    except PermissionError: j = _http_json(url, headers={"Authorization": f"Bearer {_tvdb_token(key, True)}"})
+    out = []
+    for r in (j.get("data") or [])[:8]:
+        series = (r.get("type") or "series") != "movie"
+        tid = str(r.get("tvdb_id") or re.sub(r"\D", "", str(r.get("id") or "")))
+        out.append(_hit("tvdb", (r.get("translations") or {}).get("deu") or r.get("name"), r.get("name"), r.get("year") or r.get("first_air_time"),
+                        "Serie" if series else "Film", (r.get("overviews") or {}).get("deu") or r.get("overview"), f"tvdb:{tid}" if series and tid else "", tid))
+    return out
+
+_ANILIST_Q = "query($s:String){Page(perPage:8){media(search:$s,type:ANIME,sort:SEARCH_MATCH){id title{romaji english} startDate{year} format description(asHtml:false)}}}"
+def _s_anilist(q, kind, year, c):
+    j = _http_json(ANILIST_API, data={"query": _ANILIST_Q, "variables": {"s": q}})
+    return [_hit("anilist", (m["title"] or {}).get("english") or (m["title"] or {}).get("romaji"), (m["title"] or {}).get("romaji"),
+                 (m.get("startDate") or {}).get("year"), "Anime-Film" if m.get("format") == "MOVIE" else "Anime", m.get("description"), "", m["id"])
+            for m in (((j.get("data") or {}).get("Page") or {}).get("media") or [])]
+
+def _s_jikan(q, kind, year, c):
+    j = _http_json(f"{JIKAN_API}/anime?{urllib.parse.urlencode({'q': q, 'limit': 8, 'sfw': 'true'})}")
+    return [_hit("jikan", m.get("title_english") or m.get("title"), m.get("title"),
+                 m.get("year") or (((m.get("aired") or {}).get("prop") or {}).get("from") or {}).get("year"),
+                 "Anime-Film" if m.get("type") == "Movie" else "Anime", m.get("synopsis"), "", m.get("mal_id"))
+            for m in (j.get("data") or [])[:8]]
+
+_META_FN = {"tmdb": _s_tmdb, "tvdb": _s_tvdb, "anilist": _s_anilist, "jikan": _s_jikan}
+_META_KINDS = {"tv": ("tmdb", "tvdb"), "movie": ("tmdb", "tvdb"), "anime": ("anilist", "jikan", "tvdb", "tmdb"),
+               "all": ("tmdb", "tvdb", "anilist", "jikan")}
+
+def meta_search_all(q, kind="all", year=""):
+    c = meta_conf(); results, errors = {}, {}
+    srcs = [x for x in _META_KINDS.get(kind, _META_KINDS["all"]) if c["on"][x]]
+    def run(x):
+        try: results[x] = _META_FN[x](q, kind, year, c)
+        except PermissionError as e: errors[x] = str(e)
+        except Exception as e: errors[x] = str(e) or "unbekannter Fehler"
+    ts = [threading.Thread(target=run, args=(x,)) for x in srcs]
+    [t.start() for t in ts]; [t.join(15) for t in ts]
+    for x in srcs:
+        if x not in results and x not in errors: errors[x] = "Zeitüberschreitung"
+    merged = []                                   # abwechselnd je Quelle, damit jede oben vertreten ist
+    lists = [results.get(x, []) for x in srcs]
+    for i in range(max([len(l) for l in lists] + [0])):
+        merged += [l[i] for l in lists if i < len(l)]
+    return merged, errors
+
+@app.get("/api/meta")
+def meta_get():
+    c = meta_conf()
+    return jsonify(tmdb_set=bool(c["tmdb_key"]), tvdb_set=bool(c["tvdb_key"]), on=c["on"], names=META_NAMES)
+
+@app.post("/api/meta/config")
+def meta_config():
+    b = request.get_json() or {}
+    d = load(META_JSON, {}) or {}
+    for k in ("tmdb_key", "tvdb_key"):
+        v = (b.get(k) or "").strip()
+        if v: d[k] = v
+        if b.get("clear_" + k): d.pop(k, None)
+    if isinstance(b.get("on"), dict): d["on"] = {k: bool(b["on"].get(k, True)) for k in META_NAMES}
+    save(META_JSON, d)
+    if "tvdb_key" in b: _tvdb_tok.update(t="", exp=0.0)
+    return jsonify(ok=True)
+
+@app.post("/api/meta/search")
+def meta_search():
+    d = request.get_json() or {}
+    q = (d.get("q") or "").strip()
+    if len(q) < 2: return jsonify(error="Bitte mindestens zwei Zeichen eingeben."), 400
+    kind = d.get("kind") if d.get("kind") in _META_KINDS else "all"
+    year = re.sub(r"\D", "", str(d.get("year") or ""))[:4]
+    res, errs = meta_search_all(q, kind, year)
+    return jsonify(results=res, errors=errs, names=META_NAMES)
+
 @app.get("/api/history")
 def history():
     return jsonify(items=list(reversed(load("history.json", []))))
@@ -2542,6 +2690,9 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 .dgf input{margin-top:3px;flex:none}.dgi{display:flex;flex-direction:column;gap:2px;min-width:0}
 .dgn{font-weight:600;word-break:break-word}.dgp{color:var(--muted);word-break:break-all;font-size:12.5px;background:none;padding:0}
 .dgm{font-size:13px;color:var(--muted)}#dk-dup .row{margin-bottom:8px}
+.mpick{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 0}.mres{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:260px;overflow:auto}
+.mhit{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;padding:9px 12px;border-radius:12px;width:100%}.mhit .sub{font-size:12.5px;line-height:1.35}
+.mon{display:flex;gap:10px;align-items:center;margin:6px 0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body><main>
 
@@ -2602,8 +2753,9 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <p class="sub" id="gdet" style="margin:0 0 12px"></p>
   <label class="l" for="gname">Name der Serie</label>
   <input type="text" id="gname" autocomplete="off" required>
+  <div class="mpick"><button type="button" data-mp="g">🔎 Online suchen</button><span class="sub" id="gmsg"></span></div><div class="mres" id="gres"></div>
   <div class="field"><div><label class="l" for="gyear">Jahr (optional)</label><input type="text" id="gyear" inputmode="numeric" maxlength="4" placeholder="1996"></div>
-  <div><label class="l" for="gtmdb">TMDB-ID (optional)</label><input type="text" id="gtmdb" inputmode="numeric" placeholder="12609"></div></div>
+  <div><label class="l" for="gtmdb">ID (optional)</label><input type="text" id="gtmdb" placeholder="12609 oder tvdb:81189" title="TMDB-ID oder tvdb:ID"></div></div>
   <div class="field"><div><label class="l" for="gcat">Kategorie</label><select id="gcat"></select></div>
   <div><label class="l" for="gseason">Staffel</label><input type="number" id="gseason" min="0" max="99" value="1"></div></div>
   <label class="l" for="gmode">Folgennummern</label>
@@ -2619,8 +2771,9 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <p class="sub" id="sdet" style="margin:0 0 12px"></p>
   <label class="l" for="sname">Name der Serie</label>
   <input type="text" id="sname" autocomplete="off" required>
+  <div class="mpick"><button type="button" data-mp="s">🔎 Online suchen</button><span class="sub" id="smsg"></span></div><div class="mres" id="sres"></div>
   <div class="field"><div><label class="l" for="syear">Jahr (optional)</label><input type="text" id="syear" inputmode="numeric" maxlength="4" placeholder="1996"></div>
-  <div><label class="l" for="stmdb">TMDB-ID (optional)</label><input type="text" id="stmdb" inputmode="numeric" placeholder="12609"></div></div>
+  <div><label class="l" for="stmdb">ID (optional)</label><input type="text" id="stmdb" placeholder="12609 oder tvdb:81189" title="TMDB-ID oder tvdb:ID"></div></div>
   <label class="l" for="scat">Kategorie</label>
   <select id="scat"></select>
   <p class="sub" style="margin:12px 0 4px" id="scount">So landen die Dateien später:</p>
@@ -2856,6 +3009,19 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div id="rules"></div>
   </div>
   <div class="card">
+    <header><span class="ico">🔎</span><div><h2>Metadaten-Quellen</h2><p class="sub">Zum Suchen von Name, Jahr und ID im Gruppen- und Umbenennen-Dialog. Die ID landet als <code>[tmdbid-…]</code> bzw. <code>[tvdbid-…]</code> im Ordnernamen, so erkennt Jellyfin die Serie sicher.</p></div></header>
+    <label class="mon"><input type="checkbox" id="mon-tmdb"> TMDB (Filme, Serien)</label>
+    <label class="mon"><input type="checkbox" id="mon-tvdb"> TVDB (Serien, Filme)</label>
+    <label class="mon"><input type="checkbox" id="mon-anilist"> AniList (Anime, ohne Key)</label>
+    <label class="mon"><input type="checkbox" id="mon-jikan"> MyAnimeList über Jikan (Anime, ohne Key)</label>
+    <label class="l" for="mkey-tmdb">TMDB API-Key (kostenlos: themoviedb.org → Einstellungen → API)</label>
+    <input type="password" id="mkey-tmdb" class="mono" autocomplete="off" placeholder="API-Key oder Lesetoken">
+    <label class="l" for="mkey-tvdb">TVDB API-Key (kostenlos: thetvdb.com/api-information)</label>
+    <input type="password" id="mkey-tvdb" class="mono" autocomplete="off" placeholder="API-Key">
+    <div class="bar"><button id="msave">Speichern</button><button id="mtest" class="primary">🔎 Quellen testen</button></div>
+    <div id="mres" class="sub"></div>
+  </div>
+  <div class="card">
     <header><span class="ico">⬆️</span><div><h2>Update</h2><p class="sub" id="updsub">Holt die neueste app.py aus GitHub. Danach startet MediaButler neu.</p></div></header>
     <div id="updwarn" class="banner warn" hidden></div>
     <label class="l" for="updrepo">GitHub-Repo</label>
@@ -3080,9 +3246,9 @@ function openMeta(){
     return{name:rule?rule.name:top(n),count:fs.length,origs:[...o.values()],category:rule&&rule.category||top(c),
       year:rule?rule.year:(fs[0].series.year||""),tmdb:rule?rule.tmdb:""}}).sort((a,b)=>a.name.localeCompare(b.name));
   $("mdet").textContent=`${metaRows.length} markierte ${metaRows.length===1?"Serie":"Serien"}`;$("merr").textContent="";
-  $("mrows").innerHTML=`<div class="mrow head"><span>Serie</span><span>Jahr</span><span>TMDB-ID</span></div>`+metaRows.map((r,i)=>`<div class="mrow"><div><b>${esc(r.name)}</b> <span class="sub">${r.count} Datei(en)</span></div>
+  $("mrows").innerHTML=`<div class="mrow head"><span>Serie</span><span>Jahr</span><span>ID</span></div>`+metaRows.map((r,i)=>`<div class="mrow"><div><b>${esc(r.name)}</b> <span class="sub">${r.count} Datei(en)</span></div>
     <input type="text" data-y="${i}" inputmode="numeric" maxlength="4" placeholder="1996" value="${esc(r.year)}" aria-label="Jahr von ${esc(r.name)}">
-    <input type="text" data-t="${i}" inputmode="numeric" placeholder="12609" value="${esc(r.tmdb)}" aria-label="TMDB-ID von ${esc(r.name)}"></div>`).join("");
+    <input type="text" data-t="${i}" placeholder="12609 / tvdb:81189" value="${esc(r.tmdb)}" aria-label="ID von ${esc(r.name)}"></div>`).join("");
   $("mdlg").showModal()}
 $("mbtn").onclick=openMeta;
 $("mcancel").onclick=()=>$("mdlg").close();
@@ -3090,7 +3256,7 @@ $("mform").onsubmit=async ev=>{ev.preventDefault();
   const val=(a,i)=>$("mrows").querySelector(`[data-${a}="${i}"]`).value.trim();
   let bad=false;$("mrows").querySelectorAll("input").forEach(x=>x.classList.remove("bad"));
   metaRows.forEach((r,i)=>{if(val("y",i)&&!/^(19[2-9]\d|20[0-3]\d)$/.test(val("y",i))){$("mrows").querySelector(`[data-y="${i}"]`).classList.add("bad");bad=true}
-    if(val("t",i)&&!/^\d{1,10}$/.test(val("t",i))){$("mrows").querySelector(`[data-t="${i}"]`).classList.add("bad");bad=true}});
+    if(val("t",i)&&!/^(?:(?:tmdb|tvdb)(?:id)?\s*[:\-_ ]?\s*)?\d{1,10}$/i.test(val("t",i))){$("mrows").querySelector(`[data-t="${i}"]`).classList.add("bad");bad=true}});
   if(bad){$("merr").textContent="Bitte die markierten Felder prüfen: Jahr als 1920 bis 2039, TMDB-ID nur als Zahl.";return}
   const todo=metaRows.map((r,i)=>({r,year:val("y",i),tmdb:val("t",i)})).filter(x=>x.year!==x.r.year||x.tmdb!==x.r.tmdb);
   if(!todo.length){$("mdlg").close();toast("Nichts geändert");return}
@@ -3107,7 +3273,7 @@ let rulesCache=[];
 async function loadRules(){try{rulesCache=(await api("/api/rules")).rules}catch{}}
 function drawRules(){
   $("rules").innerHTML=rulesCache.length?rulesCache.map((r,i)=>`<div class="rule"><div><b>${esc(r.name)}${r.year?` (${esc(r.year)})`:""}</b>
-    <span class="sub">erkannt als „${esc(r.detected)}“ · ${r.category?ICON[r.category]+" "+r.category:"Kategorie automatisch"}${r.tmdb?` · tmdbid-${esc(r.tmdb)}`:""}</span></div>
+    <span class="sub">erkannt als „${esc(r.detected)}“ · ${r.category?ICON[r.category]+" "+r.category:"Kategorie automatisch"}${r.tmdb?` · ${/^tvdb:/.test(r.tmdb)?"tvdbid-"+esc(r.tmdb.slice(5)):"tmdbid-"+esc(r.tmdb)}`:""}</span></div>
     <button class="danger" data-r="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Serien gemerkt.</p>';
   $("rules").querySelectorAll("button").forEach(b=>b.onclick=async()=>{
     try{rulesCache=(await api("/api/rules/delete",{key:rulesCache[b.dataset.r].key})).rules;drawRules();toast("Entfernt","ok")}catch(e){toast(e.message,"bad")}})}
@@ -3438,7 +3604,7 @@ function fillSettings(s){
     +kv("Zeitzone",esc(s.tz))+kv("Mindestalter",`${i.min_age} s`,"Jüngere Dateien ignoriert der Zeitplan, weil sie evtl. noch geschrieben werden")
     +kv("Neue Dateien prüfen",`alle ${i.watch} s`,"Telegram meldet sie, sobald sich zwei Prüfungen in Folge nicht mehr ändern")
     +kv("Login",i.auth?"aktiv":"aus","AUTH_USER und AUTH_PASS in der docker-compose.yml")+kv("Codec-Analyse",i.ffprobe?"ffprobe vorhanden":"ffprobe fehlt")}
-async function loadSched(){fillSettings(await api("/api/settings"));await loadRules();drawRules();loadUpd()}
+async function loadSched(){fillSettings(await api("/api/settings"));await loadRules();drawRules();loadMeta();loadUpd()}
 let pt;$("cron").oninput=()=>{drawPresets();clearTimeout(pt);pt=setTimeout(async()=>{
   const r=await api("/api/cron?expr="+encodeURIComponent($("cron").value));nextList(r.next||[],r.error)},300)};
 const collect=()=>({enabled:$("en").checked,cron:$("cron").value,move_after:$("mv").checked,cleanup_after:$("cu").checked,jellyfin:$("jf").checked,jf_scan:$("jfs").checked,jf_url:$("jfurl").value,jf_key:$("jfkey").value,jf_mode:$("jfmode").value,jf_root:$("jfroot").value,
@@ -3601,6 +3767,35 @@ $("ddel").onclick=async()=>{
     toast(`${r.deleted} gelöscht, ${fmt(r.freed)} frei`+(r.kept?`, in ${r.kept} Gruppe(n) blieb eine Datei`:""),r.errors.length?"bad":"ok");
     if(r.errors.length)toast(r.errors[0],"bad");
     dsel.clear();loadDup()}catch(e){toast(e.message,"bad");drawDupSel()}};
+
+/* Metadaten-Suche */
+async function metaSearch(p){
+  const name=$(p+"name").value.trim();if(name.length<2){toast("Erst einen Namen eingeben.","bad");return}
+  const cat=$(p+"cat").value,kind=cat==="Anime"?"anime":cat==="Dokus"?"all":"tv";
+  $(p+"msg").textContent="Suche …";$(p+"res").innerHTML="";
+  try{const r=await api("/api/meta/search",{q:name,kind,year:$(p+"year").value});
+    const errs=Object.entries(r.errors).map(([k,e])=>`${r.names[k]}: ${e}`).join(" · ");
+    $(p+"msg").textContent=(r.results.length?"":"Keine Treffer. ")+errs+(/Key/.test(errs)?" (Keys unter ⚙️ Einstellungen)":"");
+    $(p+"res").innerHTML=r.results.map((m,i)=>`<button type="button" class="mhit" data-i="${i}"><span class="mt"><b>${esc(m.title)}</b>${m.year?` (${esc(m.year)})`:""}
+      <span class="tag">${esc(r.names[m.src])}</span> <span class="tag">${esc(m.kind)}</span></span>${m.overview?`<span class="sub">${esc(m.overview)}</span>`:""}</button>`).join("");
+    $(p+"res").querySelectorAll(".mhit").forEach(b=>b.onclick=()=>{const m=r.results[+b.dataset.i];
+      $(p+"name").value=m.title;$(p+"year").value=m.year||"";$(p+"tmdb").value=m.idval||"";
+      ["name","year","tmdb"].forEach(f=>$(p+f).dispatchEvent(new Event("input")));
+      $(p+"res").innerHTML="";$(p+"msg").textContent=m.idval?"":"Diese Quelle liefert keine ID für Jellyfin, nur Name und Jahr."})
+  }catch(e){$(p+"msg").textContent="⚠️ "+e.message}}
+document.querySelectorAll("button[data-mp]").forEach(b=>b.onclick=()=>metaSearch(b.dataset.mp));
+async function loadMeta(){try{const m=await api("/api/meta");
+  for(const k of Object.keys(m.names))$("mon-"+k).checked=m.on[k];
+  $("mkey-tmdb").value="";$("mkey-tmdb").placeholder=m.tmdb_set?"gespeichert (zum Ändern neu eingeben)":"API-Key oder Lesetoken";
+  $("mkey-tvdb").value="";$("mkey-tvdb").placeholder=m.tvdb_set?"gespeichert (zum Ändern neu eingeben)":"API-Key"}catch{}}
+async function saveMeta(){const on={};["tmdb","tvdb","anilist","jikan"].forEach(k=>on[k]=$("mon-"+k).checked);
+  await api("/api/meta/config",{on,tmdb_key:$("mkey-tmdb").value,tvdb_key:$("mkey-tvdb").value});await loadMeta()}
+$("msave").onclick=async()=>{try{await saveMeta();toast("Gespeichert","ok")}catch(e){toast(e.message,"bad")}};
+$("mtest").onclick=async()=>{$("mres").textContent="Teste …";
+  try{await saveMeta();const r=await api("/api/meta/search",{q:"The Office",kind:"all"});
+    const n={};r.results.forEach(m=>n[m.src]=(n[m.src]||0)+1);
+    $("mres").innerHTML=Object.keys(r.names).filter(k=>$("mon-"+k).checked).map(k=>r.errors[k]?`⚠️ ${r.names[k]}: ${esc(r.errors[k])}`:`✅ ${r.names[k]}: ${n[k]||0} Treffer`).join("<br>")}
+  catch(e){$("mres").textContent="⚠️ "+e.message}};
 
 /* Update */
 async function loadUpd(){
