@@ -52,3 +52,7 @@ Auf der Downloads-Seite „🧩 Browser-Plugin laden“ (oder `/api/dl/plugin.zi
 ### Docker-Image von GitHub
 
 Bei jedem Push baut GitHub das Image für amd64 und arm64 und legt es in der GitHub Container Registry ab: `ghcr.io/habobababo/mediabutler:latest` (zusätzlich `:v<Build-Nr>`). Das Repo ist privat, daher einmalig am Server anmelden: `echo <Token mit read:packages> | docker login ghcr.io -u habobababo --password-stdin`. Dann `docker compose pull && docker compose up -d`.
+
+### Schnellstart (plug and play)
+
+Dateien `docker-compose.yml`, `.env.example` und `setup.sh` in einen Ordner legen, dann `./setup.sh`. Das Skript legt `.env` mit zufälligem Passwort und API-Key an, zeigt sie an und startet MediaButler. Ohne Skript: `.env.example` zu `.env` kopieren, ausfüllen, `docker compose up -d`. Ohne `AUTH_PASS` startet der Stack nicht (kein offener Zugang aus Versehen).

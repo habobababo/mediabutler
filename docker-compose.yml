@@ -5,21 +5,21 @@ services:
     container_name: mediabutler
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${PORT:-8080}:8080"
       - "9666:9666"   # Click'n'Load
     environment:
-      TZ: Europe/Berlin          # Zeitzone für den Cron-Zeitplan
+      TZ: ${TZ:-Europe/Berlin}
       SOURCE_DIR: /incoming
       TARGET_DIR: /media
       DATA_DIR: /data
-      PUBLIC_URL: "https://media.p.pixelpotato.de"   # für Links in Telegram-Nachrichten
-      AUTH_USER: "admin"           # Login der Web-UI (Basic Auth)
-      AUTH_PASS: "bitte-aendern"   # leer lassen = kein Login
-      API_KEY: ""                  # optional: Schlüssel für pyLoad n Click (Passwörter weiterreichen), z. B. langer Zufallstext
-      MIN_AGE: "120"               # Dateien/Ordner jünger als 120 s werden im Auto-Modus ignoriert
-      WATCH_INTERVAL: "60"         # alle 60 s nach neuen Dateien und Problemen schauen (Telegram)
-      MOVE_AFTER: "0"              # nur Startwert, danach in der Web-UI unter "Einstellungen" änderbar
+      PUBLIC_URL: "${PUBLIC_URL:-}"       # für Links in Telegram-Nachrichten
+      AUTH_USER: "${AUTH_USER:-admin}"     # Login der Web-UI
+      AUTH_PASS: "${AUTH_PASS:?AUTH_PASS fehlt: ./setup.sh ausführen oder .env ausfüllen}"
+      API_KEY: "${API_KEY:-}"              # für Chrome-Plugin, LabGate, pyLoad
+      MIN_AGE: "120"
+      WATCH_INTERVAL: "60"
+      MOVE_AFTER: "0"
     volumes:
-      - /mnt/share/media/downloads:/incoming   # Quelle
-      - /mnt/share/media:/media                # Ziel (NFS bereits gemountet)
-      - ./data:/data                           # Einstellungen + Verlauf
+      - ${DOWNLOADS_DIR:-./incoming}:/incoming   # Quelle (hier landen Downloads)
+      - ${MEDIA_DIR:-./media}:/media             # Ziel (z. B. NFS-Share)
+      - ./data:/data                             # Einstellungen + Verlauf
