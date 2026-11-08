@@ -65,6 +65,8 @@ type dlManager struct {
 	client  *http.Client
 	noRedir *http.Client
 	pkgDone map[string]bool
+	pkgBeg  map[string]bool
+	hist    []M
 	opt     []string
 	acc     []M
 	accT    time.Time
@@ -212,7 +214,7 @@ func (d *dlManager) conf() DLConf {
 }
 
 func (a *App) dlInit() *dlManager {
-	d := &dlManager{a: a, cancel: map[int]context.CancelFunc{}, wake: make(chan struct{}, 1), pkgDone: map[string]bool{}}
+	d := &dlManager{a: a, cancel: map[int]context.CancelFunc{}, wake: make(chan struct{}, 1), pkgDone: map[string]bool{}, pkgBeg: map[string]bool{}}
 	d.jar = newJar(a)
 	tr := &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: 60 * time.Second, TLSHandshakeTimeout: 20 * time.Second,
 		DialContext: (&net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}).DialContext}
@@ -220,6 +222,7 @@ func (a *App) dlInit() *dlManager {
 	d.noRedir = &http.Client{Transport: tr, Jar: d.jar, Timeout: 60 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	a.load("downloads.json", &d.f)
+	a.load("dl_hist.json", &d.hist)
 	for _, it := range d.f.Items {
 		if it.Status == "lädt" {
 			it.Status = "wartet"
@@ -406,6 +409,16 @@ func (d *dlManager) loop() {
 			}
 			if it.Status == "wartet" {
 				it.Status, it.Err = "lädt", ""
+				if !d.pkgBeg[it.Pkg] {
+					d.pkgBeg[it.Pkg] = true
+					n := 0
+					for _, o := range d.f.Items {
+						if o.Pkg == it.Pkg {
+							n++
+						}
+					}
+					d.a.notify(fmt.Sprintf("▶️ Download gestartet: %s (%d Datei(en))", it.Pkg, n), "tg_start")
+				}
 				ctx, cancel := context.WithCancel(context.Background())
 				d.cancel[it.ID] = cancel
 				running++
@@ -587,15 +600,36 @@ func (d *dlManager) run(ctx context.Context, it *DLItem) {
 			pkgFin = false
 		}
 	}
-	notify := pkgFin && !d.pkgDone[it.Pkg]
-	if notify {
-		d.pkgDone[it.Pkg] = true
+	notify := pkgFin
+	var sum string
+	if pkgFin {
+		// Fertiges Paket aus der Liste nehmen (Dateien bleiben im Zielordner) und im Verlauf merken
+		var keep []*DLItem
+		var size int64
+		n := 0
+		for _, o := range d.f.Items {
+			if o.Pkg == it.Pkg {
+				size += o.Size
+				n++
+			} else {
+				keep = append(keep, o)
+			}
+		}
+		d.f.Items = keep
+		delete(d.pkgDone, it.Pkg)
+		delete(d.pkgBeg, it.Pkg)
+		d.hist = append([]M{{"name": it.Pkg, "files": n, "size": size, "at": time.Now().Format(time.RFC3339)}}, d.hist...)
+		if len(d.hist) > 10 {
+			d.hist = d.hist[:10]
+		}
+		d.a.save("dl_hist.json", d.hist)
+		sum = fmt.Sprintf("%d Datei(en), %s", n, hsize(float64(size)))
 	}
 	d.saveLocked()
 	d.mu.Unlock()
 	d.poke()
 	if notify {
-		d.a.notify(fmt.Sprintf("⬇️ Download fertig: %s", it.Pkg), "tg_done")
+		d.a.notify(fmt.Sprintf("✅ Download fertig: %s\n%s", it.Pkg, sum)+d.a.linkLine("dl"), "tg_done")
 	}
 }
 
@@ -750,7 +784,11 @@ func (d *dlManager) view() M {
 		}
 		pkgs = append(pkgs, M{"name": p.Name, "items": p.Items, "size": p.Size, "done": p.Done, "speed": p.Speed, "status": st, "finished": p.nd, "total": len(p.Items)})
 	}
-	return M{"packages": pkgs, "active": active}
+	hist := d.hist
+	if hist == nil {
+		hist = []M{}
+	}
+	return M{"packages": pkgs, "active": active, "history": hist}
 }
 
 func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {

@@ -421,6 +421,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div id="dlacc" class="card wide" hidden></div>
   <div class="bar" id="dlgbar" hidden><button class="primary" id="dlmerge"></button><button id="dlsel0">Auswahl aufheben</button></div>
   <div id="dlpk"></div>
+  <div id="dlhist" class="card wide" hidden></div>
   <div id="dlempty" class="empty card wide" hidden><div class="big">⬇️</div><b>Keine Downloads</b>Links oben einfügen oder per Click'n'Load aus dem Browser senden.</div>
   <div class="card wide">
     <header><span class="ico">⬇️</span><div><h2>Links hinzufügen</h2><p class="sub">Einen oder mehrere Links einfügen (HTTP, HTTPS, ddownload.com). Teile wie <code>.part01.rar</code> werden automatisch zu einem Paket gruppiert.</p></div></header>
@@ -793,6 +794,8 @@ async function loadDl(cfg){try{const r=await api("/api/dl");
   const c=r.conf;if((cfg||!dlBusy)&&(view==="dl"||view==="set"))fillDlCfg(c);
   if(view!=="dl")return;
   if(Date.now()-accT>60000)loadAcc();
+  const hb=$("dlhist");hb.hidden=!(r.history&&r.history.length);
+  if(!hb.hidden)hb.innerHTML=`<b>✅ Zuletzt abgeschlossen</b>`+r.history.map(x=>`<div class="amit"><span>📦 ${esc(x.name)}</span> <span class="sub">${x.files} Datei(en) · ${fmt(x.size)} · ${new Date(x.at).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span></div>`).join("");
   const pk=r.packages;$("dlempty").hidden=!!pk.length;
   const tot=pk.reduce((a,p)=>a+p.speed,0);$("dlsum").textContent=pk.length?`${pk.length} Paket(e)${tot?" · "+spd(tot):""}`:"";
   $("dlpk").innerHTML=pk.map(p=>{const pct=p.size?Math.min(100,Math.round(p.done*100/p.size)):(p.status==="fertig"?100:0),open=dlOpen.has(p.name);
