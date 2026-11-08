@@ -60,12 +60,12 @@ func uniq(l []string) []string {
 
 func (a *App) hFiles(w http.ResponseWriter, r *http.Request) {
 	a.purgeSamples(true)
-	cm, busy := a.copied(), a.busySrc()
+	cm, busy, bl := a.copied(), a.busySrc(), a.extractBlocked()
 	out := []M{}
 	shows := map[string]bool{}
 	for _, rel := range walkFiles(a.source) {
 		name := path.Base(rel)
-		if !videoExt[lowerExt(name)] || reSample.MatchString(name) || hiddenRel(rel) {
+		if !videoExt[lowerExt(name)] || reSample.MatchString(name) || hiddenRel(rel) || exBlocked(rel, bl) {
 			continue
 		}
 		st, err := os.Stat(a.abs(rel))
@@ -90,7 +90,7 @@ func (a *App) hFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	ts, _ := os.Stat(a.target)
 	js(w, 200, M{"library": a.libraryEps(shows), "files": out, "categories": categories, "source": a.source, "target": a.target,
-		"target_mounted": ts != nil && ts.IsDir(), "extracting": M{"n": 0, "pw": 0, "err": 0, "running": false, "done": 0, "total": 0}, "dupidx": false})
+		"target_mounted": ts != nil && ts.IsDir(), "extracting": a.exSummary(), "dupidx": false})
 }
 
 func (a *App) hRulesSet(w http.ResponseWriter, r *http.Request) {
@@ -405,7 +405,7 @@ func (a *App) hStatus(w http.ResponseWriter, r *http.Request) {
 		"files_done": j.FilesDone, "current": j.Current, "current_size": j.CurrentSize, "current_done": j.CurrentDone, "speed": j.Speed,
 		"errors": errs, "finished": j.Finished, "started": ts(j.Started), "ended": ts(j.Ended), "source": j.Source, "counts": counts,
 		"elapsed": el, "schedule": M{"enabled": c.Enabled, "cron": c.Cron, "next": next, "last": c.LastResult},
-		"extract": M{"n": 0, "pw": 0, "err": 0, "running": false, "done": 0, "total": 0}, "disk": a.diskInfo(), "batches": nb, "waiting": waiting})
+		"extract": a.exSummary(), "disk": a.diskInfo(), "batches": nb, "waiting": waiting})
 }
 
 func (a *App) hJobQueue(w http.ResponseWriter, r *http.Request) {
@@ -494,7 +494,7 @@ func (a *App) settingsPayload() M {
 	m["tz"], m["persist"] = time.Now().Format("MST"), a.persist
 	_, ffErr := lookPath("ffprobe")
 	m["info"] = M{"source": a.source, "target": a.target, "data": a.dir, "min_age": int(a.minAge.Seconds()), "auth": a.pass != "",
-		"ffprobe": ffErr == nil, "sevenz": false, "watch": 60, "go": runtime.Version()}
+		"ffprobe": ffErr == nil, "sevenz": sevenz() != "", "watch": 60, "go": runtime.Version()}
 	return m
 }
 

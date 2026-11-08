@@ -31,8 +31,10 @@ func main() {
 	a := &App{Store: NewStore(env("DATA_DIR", "/data")), source: src, target: tgt, minAge: time.Duration(minAge) * time.Second,
 		user: env("AUTH_USER", "admin"), pass: env("AUTH_PASS", ""), apiKey: env("API_KEY", ""), version: version}
 	a.qcond = sync.NewCond(&a.qmu)
+	a.ex = &exState{m: map[string]*exEntry{}}
 	go a.queueWorker()
 	go a.scheduler()
+	go a.extractLoop()
 	port := env("PORT", "8080")
 	fmt.Printf("MediaButler (Go) %s auf :%s – Quelle %s, Ziel %s\n", version, port, src, tgt)
 	if err := http.ListenAndServe(":"+port, a.routes()); err != nil {
@@ -116,15 +118,16 @@ func (a *App) routes() http.Handler {
 	notYet := func(w http.ResponseWriter, r *http.Request) {
 		js(w, 501, M{"error": "In der Go-Version noch nicht verfügbar."})
 	}
-	for _, p := range []string{"/api/extract", "/api/dupes", "/api/update", "/api/meta", "/api/analysis/status", "/api/analysis/results"} {
+	for _, p := range []string{"/api/dupes", "/api/update", "/api/meta", "/api/analysis/status", "/api/analysis/results"} {
 		get(p, notYet)
 	}
-	for _, p := range []string{"/api/extract/scan", "/api/extract/settings", "/api/extract/start", "/api/extract/cancel", "/api/extract/dismiss",
-		"/api/extract/password", "/api/extract/password/delete", "/api/hook", "/api/analysis/start", "/api/analysis/cancel", "/api/dupes/start",
+	for _, p := range []string{"/api/analysis/start", "/api/analysis/cancel", "/api/dupes/start",
 		"/api/dupes/cancel", "/api/dupes/delete", "/api/update/config", "/api/update/check", "/api/update/install", "/api/update/rollback",
 		"/api/meta/config", "/api/meta/search", "/api/jellyfin/test", "/api/telegram/test"} {
 		post(p, notYet)
 	}
+
+	a.exRoutes(get, post)
 
 	page, _ := webFS.ReadFile("web/page.html")
 	sum := sha256.Sum256(page)

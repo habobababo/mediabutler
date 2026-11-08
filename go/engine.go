@@ -65,6 +65,8 @@ type App struct {
 	qid     int
 	qcond   *sync.Cond
 
+	ex *exState
+
 	diskT time.Time
 	diskV map[string]any
 }
@@ -334,12 +336,12 @@ func (a *App) isCopied(cm map[string]sig, rel string) bool {
 
 func (a *App) scan() ([]item, []string) {
 	a.purgeSamples(true)
-	cm := a.copied()
+	cm, bl := a.copied(), a.extractBlocked()
 	var items []item
 	unclear := []string{}
 	for _, rel := range walkFiles(a.source) {
 		name := path.Base(rel)
-		if !videoExt[lowerExt(name)] || strings.HasPrefix(name, ".") || reSample.MatchString(name) || hiddenRel(rel) {
+		if !videoExt[lowerExt(name)] || strings.HasPrefix(name, ".") || reSample.MatchString(name) || hiddenRel(rel) || exBlocked(rel, bl) {
 			continue
 		}
 		st, err := os.Stat(a.abs(rel))
@@ -777,7 +779,13 @@ func (a *App) dirInfo(name string) map[string]any {
 		}
 	}
 	reason := ""
+	blocked := false
+	for _, x := range a.extractBlocked() {
+		blocked = blocked || x == name || strings.HasPrefix(x, name+"/")
+	}
 	switch {
+	case blocked:
+		reason = "wird gerade entpackt"
 	case media > 0:
 		reason = "enthält noch Medien"
 	case partial:

@@ -11,7 +11,8 @@ Ein statisches Binary statt Python + Flask.
 | Scan, Kategorien, Gruppen, eigene Zielordner, Regeln | fertig |
 | Kopier-Queue, Cancel, Verlauf, Move-after, Leftovers, Samples | fertig |
 | Zeitplan (Cron), Einstellungen, Speicherbalken, Auth, Icons | fertig |
-| Entpacken, Hook, Duplikate, Analyse | folgt (liefert 501) |
+| Entpacken (RAR/ZIP/7z, mehrteilig, Passwörter), Hook | fertig (benötigt 7zz) |
+| Duplikate, Analyse | folgt (liefert 501) |
 | Metadaten (TMDB/TVDB/AniList/Jikan), Telegram, Jellyfin-Scan, Update-Knopf | folgt (liefert 501) |
 
 ## Bauen / Testen
