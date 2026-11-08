@@ -2514,6 +2514,20 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--brand)}
 .nav button.on{width:auto;padding:0 14px;background:var(--brand);color:var(--brand-ink);border-color:transparent;box-shadow:0 2px 8px rgba(0,0,0,.35)}
 @media (min-width:700px){.nav button.on .lbl{display:inline}}
 .nav .badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;line-height:18px;font-size:11px;padding:0 5px;box-shadow:0 0 0 2px var(--bg)}
+.nav .grp{display:none}
+@media (min-width:900px){
+ body{padding-left:216px}
+ .topbar{position:fixed;left:0;top:0;bottom:0;width:216px;margin:0;padding:18px 12px;display:block;background:var(--surface);border-right:1px solid var(--line);overflow-y:auto;z-index:6}
+ .nav{flex-direction:column;gap:3px}
+ .nav .grp{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:16px 12px 5px}
+ .nav .grp:first-child{padding-top:2px}
+ .nav button,.nav button.on{width:100%;height:auto;min-height:42px;padding:0 12px;justify-content:flex-start;border-radius:12px;font-size:17px;background:transparent;border-color:transparent;box-shadow:none}
+ .nav button:hover{background:var(--bg)}
+ .nav button .lbl,.nav button.on .lbl{display:inline;font-size:14.5px}
+ .nav button.on{background:var(--brand);color:var(--brand-ink)}
+ .nav .badge{position:static;margin-left:auto;box-shadow:none}
+ .dock{left:216px}
+}
 .badge{min-width:20px;height:20px;border-radius:10px;padding:0 6px;font-size:12px;line-height:20px;text-align:center;background:var(--soft);color:var(--muted)}
 .badge.hot{background:var(--warn);color:#202734}
 
@@ -2697,13 +2711,16 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 </style></head><body><main>
 
 <div class="topbar"><nav class="nav" id="nav" aria-label="Bereiche">
+  <span class="grp">Medien</span>
   <button data-v="sort" title="Sortieren" aria-label="Sortieren"><span class="ic">📥</span><span class="lbl">Sortieren</span><span class="badge hot" id="ns" hidden></span></button>
   <button data-v="run" title="Läuft" aria-label="Läuft"><span class="ic">⚡</span><span class="lbl">Läuft</span><span class="badge live" id="nr" hidden></span></button>
   <button data-v="ext" title="Entpacken" aria-label="Entpacken"><span class="ic">📦</span><span class="lbl">Entpacken</span><span class="badge" id="ne" hidden></span></button>
   <button data-v="hist" title="Verschoben" aria-label="Verschoben"><span class="ic">✅</span><span class="lbl">Verschoben</span><span class="badge" id="nh" hidden></span></button>
+  <span class="grp">Bibliothek</span>
   <button data-v="clean" title="Aufräumen" aria-label="Aufräumen"><span class="ic">🧹</span><span class="lbl">Aufräumen</span><span class="badge" id="nc" hidden></span></button>
   <button data-v="dup" title="Duplikate" aria-label="Duplikate"><span class="ic">🔁</span><span class="lbl">Duplikate</span><span class="badge" id="nd" hidden></span></button>
   <button data-v="ana" title="Analyse" aria-label="Analyse"><span class="ic">📊</span><span class="lbl">Analyse</span></button>
+  <span class="grp">System</span>
   <button data-v="sched" title="Zeitplan" aria-label="Zeitplan"><span class="ic">⏰</span><span class="lbl">Zeitplan</span></button>
   <button data-v="set" title="Einstellungen" aria-label="Einstellungen"><span class="ic">⚙️</span><span class="lbl">Einstellungen</span></button>
 </nav></div>
