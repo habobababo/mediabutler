@@ -297,10 +297,24 @@ func (a *App) autoRoutes(get, post func(string, http.HandlerFunc)) {
 	get("/api/automatch", func(w http.ResponseWriter, r *http.Request) {
 		st := a.autoLoad()
 		pending, done := []AutoItem{}, []AutoItem{}
+		// Nur Titel zeigen, die noch unsortiert in der Quelle liegen (verschobene oder gelöschte verschwinden)
+		live := map[string]bool{}
+		cm, bl := a.copied(), a.extractBlocked()
+		for _, rel := range walkFiles(a.source) {
+			name := path.Base(rel)
+			if !videoExt[lowerExt(name)] || strings.HasPrefix(name, ".") || reSample.MatchString(name) || hiddenRel(rel) || exBlocked(rel, bl) || a.isCopied(cm, rel) {
+				continue
+			}
+			if cat := a.guessCategory(rel); cat != "" {
+				if sub, ok := a.autoSubject(rel, cat); ok {
+					live[sub.key] = true
+				}
+			}
+		}
 		for _, it := range st.Items {
 			switch it.Status {
 			case "abweichend", "nicht gefunden":
-				if a.ruleByKey(it.Key) == nil {
+				if a.ruleByKey(it.Key) == nil && live[it.Key] {
 					pending = append(pending, it)
 				}
 			case "zugeordnet":

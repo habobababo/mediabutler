@@ -889,8 +889,9 @@ async function loadAuto(){try{const r=await api("/api/automatch"),b=$("ambar");
   b.innerHTML=`<b>🔎 ${p.length} Titel bitte prüfen</b><span class="sub">Kein eindeutiger Treffer bei den Metadaten-Quellen</span>`+p.map(it=>`<div class="amit"><div><b>${esc(it.detected)}</b>${it.year?" ("+esc(it.year)+")":""} <span class="tag ${it.status==="abweichend"?"warn":"bad"}">${it.status==="abweichend"?"⚠️ abweichend":"❓ nicht gefunden"}</span></div>
     <div class="chips">${(it.cands||[]).map((c,i)=>`<button class="chip" data-ak="${esc(it.key)}" data-ai="${i}">${esc(c.title)}${c.year?" ("+esc(c.year)+")":""} <small>${esc(c.src)} · ${esc(c.kind)}</small></button>`).join("")}
     <button class="chip" data-aretry="${esc(it.key)}">↻ Neu suchen</button><button class="chip" data-adis="${esc(it.key)}">Ignorieren</button></div></div>`).join("");
-  b.querySelectorAll("[data-ai]").forEach(x=>x.onclick=async()=>{try{await api("/api/automatch/apply",{key:x.dataset.ak,idx:+x.dataset.ai});toast("Zugeordnet","ok");loadFiles()}catch(e){toast(e.message,"bad")}});
-  b.querySelectorAll("[data-adis]").forEach(x=>x.onclick=async()=>{await api("/api/automatch/dismiss",{key:x.dataset.adis});loadFiles()});
+  const gone=x=>{const e=x.closest(".amit");if(e)e.remove();const n=b.querySelectorAll(".amit").length;b.hidden=!n;const t=b.querySelector("b");if(t)t.textContent=`🔎 ${n} Titel bitte prüfen`};
+  b.querySelectorAll("[data-ai]").forEach(x=>x.onclick=async()=>{try{await api("/api/automatch/apply",{key:x.dataset.ak,idx:+x.dataset.ai});gone(x);toast("Zugeordnet","ok");loadFiles()}catch(e){toast(e.message,"bad")}});
+  b.querySelectorAll("[data-adis]").forEach(x=>x.onclick=async()=>{await api("/api/automatch/dismiss",{key:x.dataset.adis});gone(x);loadFiles()});
   b.querySelectorAll("[data-aretry]").forEach(x=>x.onclick=async()=>{await api("/api/automatch/retry",{key:x.dataset.aretry});toast("Suche läuft …","ok");setTimeout(loadFiles,4000)});
  }catch{}}
 function seriesBar(){

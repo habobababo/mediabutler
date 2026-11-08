@@ -40,3 +40,7 @@ Neuer Bereich „Downloads": HTTP/HTTPS-Links und ddownload.com (Premium per API
 ### ddownload (Premium)
 
 Die API liefert Direktlinks nur für eigene Dateien. Für fremde Links nutzt MediaButler wie pyLoad die Web-Anmeldung. Weil der Login ein Captcha hat, kommt die Sitzung aus dem Browser: Chrome-Plugin installieren, bei ddownload.com anmelden, die Cookies werden automatisch gesendet (oder per Button „Cookies senden“). Alternativ den Cookie-Header unter Einstellungen → Downloads einfügen. Die Cookies werden dauerhaft gespeichert. „Testen“ in den Einstellungen zeigt jeden Schritt.
+
+### NFO-Dateien für Jellyfin
+
+Nach dem Kopieren legt MediaButler zu Titeln mit bestätigter TMDB-/TVDB-ID eine NFO an: bei Filmen `<Datei>.nfo`, bei Serien `tvshow.nfo` im Serienordner (Titel, Jahr, Handlung, Genres, IDs). Vorhandene NFOs werden nie überschrieben. Abschalten mit `NFO=0`.

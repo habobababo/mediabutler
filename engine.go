@@ -642,6 +642,7 @@ func (a *App) copyOne(it item, qi *queueItem, move bool) (err error) {
 		status = "verschoben"
 	}
 	a.pushHistory(cat, path.Base(it.src), dst, size, status)
+	go a.writeNFO(it.src, cat, dst)
 	if !move {
 		a.markCopied(it.src, src)
 	} else {
