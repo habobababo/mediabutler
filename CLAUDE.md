@@ -1,23 +1,16 @@
 # MediaButler
 
-Self-hosted Web-Tool (Flask, eine Datei `app.py`), das Downloads in Filme, Serien, Anime und Dokus sortiert und auf ein NFS-Share kopiert. Alle UI-Texte und die Kommunikation sind Deutsch.
+Self-hosted Web-Tool in Go (stdlib + regexp2), das Downloads in Filme, Serien, Anime und Dokus sortiert und auf ein NFS-Share kopiert. Alle UI-Texte und die Kommunikation sind Deutsch.
 
 ## Betrieb
-- `docker compose up -d` (Dockerfile nur bei Änderungen neu bauen: `--build`).
-- `app.py` ist per Bind-Mount eingebunden: Update = Datei tauschen + `docker restart mediabutler`.
+- `docker compose up -d --build` (Image enthält ffmpeg und 7zz).
 - Pfade: Quelle `/mnt/share/media/downloads` -> `/incoming`, Ziel `/mnt/share/media` -> `/media`, Einstellungen in `./data` -> `/data`.
-- Umgebungsvariablen: SOURCE_DIR, TARGET_DIR, DATA_DIR, PUBLIC_URL, AUTH_USER/AUTH_PASS, MIN_AGE, WATCH_INTERVAL, MOVE_AFTER.
+- Umgebungsvariablen: SOURCE_DIR, TARGET_DIR, DATA_DIR, PUBLIC_URL, AUTH_USER/AUTH_PASS, API_KEY, MIN_AGE, WATCH_INTERVAL, MOVE_AFTER.
+- Update: Release-Tag pushen (`v*`), dann Update-Knopf in den Einstellungen.
 
-## Aufbau von app.py
-- Persistenz: JSON in DATA_DIR (config, history, analysis_*, seen, rules) über `load()/save()`.
-- Erkennung: `guess_category()` liefert "" bei Unklarheit (Klärungsbedarf, Zeitplan überspringt). `parse_ep()` erkennt S01E02, 1x02, Staffel/Folge/Episode, Ordner-Kontext und "Titel - 001".
-- Jellyfin-Benennung: `jf_target()` (Filme `Titel (Jahr)/Titel (Jahr).ext`, Serien `Serie (Jahr)/Season NN/Serie (Jahr) SNNENN.ext`).
-- Serien-Regeln (`rules.json`): Umbenennen/Vereinen mit Name, Jahr, TMDB-ID, Kategorie; Schlüssel `skey()` (GT und Z bleiben getrennt).
-- Kopier-Job: chunked `.part` + `os.replace`, fsync, Größenprüfung, Prozess-Lock (`fcntl`), Warteschlange in `job["queue"]`.
-- Zeitplan: eigener Cron-Parser + Scheduler-Thread; Watcher meldet neue Dateien.
-- Telegram: normal (stumm) und dringend, Fortschritt bei 25/50/75 %.
-- Codec-Analyse per ffprobe (H.265-Sparpotenzial).
-- Oberfläche: eingebettetes HTML/CSS/JS (`PAGE`), Tabs Sortieren, Läuft, Verschoben, Aufräumen, Analyse, Zeitplan, Einstellungen.
-
-## Tests
-Es gibt keine Testdateien im Repo. Wichtige Prüfungen: GT/Z-Namen bleiben getrennt, Kopieren mit Größenprüfung, Lückenanzeige bei Folgen, Klärungsfälle.
+## Aufbau
+- `main.go` Routen, Auth, eingebettete UI (`web/`); `handlers.go` API; `engine.go` Scan, Warteschlange, Kopier-Job, Aufräumen.
+- `names.go` Erkennung/Benennung (Regexe mit regexp2 wegen Lookaround), Test gegen `testdata/golden.json`.
+- `store.go` JSON-Persistenz in DATA_DIR; `cron.go` Zeitplan; `extract.go` 7-Zip; `dupes.go` Duplikate, Abgleich, ffprobe-Analyse; `notify.go` Telegram, Wächter, Jellyfin; `meta.go` Metadaten-Suche; `update.go` Selbst-Update.
+- Oberfläche: `web/page.html` (Sidebar am Desktop, Icon-Leiste am Handy).
+- Build ohne Netz: `go mod vendor` ist eingecheckt; lokal `GOFLAGS=-mod=mod`.

@@ -1,0 +1,1 @@
+{"name": "MediaButler", "short_name": "MediaButler", "start_url": "/", "display": "standalone", "background_color": "#16508a", "theme_color": "#16508a", "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"}, {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}]}
