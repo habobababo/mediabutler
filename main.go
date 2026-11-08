@@ -130,6 +130,7 @@ func (a *App) routes() http.Handler {
 	a.metaRoutes(get, post)
 	a.autoRoutes(get, post)
 	a.dlRoutes(get, post)
+	a.lmRoutes(get, post)
 	for _, p := range a.dl.opt {
 		mux.HandleFunc("OPTIONS "+p, func(w http.ResponseWriter, r *http.Request) { cors(w); w.WriteHeader(204) })
 	}
