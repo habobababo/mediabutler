@@ -143,8 +143,8 @@ td.s{white-space:nowrap;color:var(--muted)}
 select.cat{border-color:var(--cc);color:var(--cc);font-weight:700;background:color-mix(in srgb,var(--cc) 9%,var(--surface))}
 .tag{display:inline-flex;gap:4px;align-items:center;padding:2px 10px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--soft);color:var(--muted)}
 .tag.cat{color:var(--cc);background:color-mix(in srgb,var(--cc) 14%,var(--surface))}
-#v-dl input:not([type=checkbox]),#v-dl textarea{background:var(--soft);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;box-sizing:border-box}
-#v-dl summary{cursor:pointer}#v-dl .l{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
+#v-dl input:not([type=checkbox]),#v-dl textarea,#dlcfg input:not([type=checkbox]),#dlcfg textarea{background:var(--soft);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;box-sizing:border-box}
+#dlcfg .l,#v-dl .l{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
 input[type=range]{accent-color:var(--brand);height:36px;cursor:pointer}
 @media (pointer:coarse){input[type=range]{height:44px}input[type=range]::-webkit-slider-thumb{width:26px;height:26px}}
 .amit{padding:8px 0;border-top:1px solid var(--line)}.amit .chips{margin-top:6px}
@@ -304,9 +304,9 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 <div class="appbar"><button id="menu" aria-label="Menü öffnen" aria-expanded="false">☰</button><span id="vtitle"></span></div>
 <div id="scrim"></div>
 <div class="topbar"><div class="navhead"><b>🎬 MediaButler</b><button id="navclose" aria-label="Menü schließen">✕</button><button id="navtoggle" aria-label="Seitenleiste ein- oder ausklappen" title="Seitenleiste ein- oder ausklappen">«</button></div><nav class="nav" id="nav" aria-label="Bereiche">
+  <button data-v="dl" title="Downloads" aria-label="Downloads"><span class="ic">⬇️</span><span class="lbl">Downloads</span><span class="badge live" id="ndl" hidden></span></button>
   <span class="grp">Medien</span>
   <button data-v="sort" title="Sortieren" aria-label="Sortieren"><span class="ic">📥</span><span class="lbl">Sortieren</span><span class="badge hot" id="ns" hidden></span></button>
-  <button data-v="dl" title="Downloads" aria-label="Downloads"><span class="ic">⬇️</span><span class="lbl">Downloads</span><span class="badge live" id="ndl" hidden></span></button>
   <button data-v="run" title="Läuft" aria-label="Läuft"><span class="ic">⚡</span><span class="lbl">Läuft</span><span class="badge live" id="nr" hidden></span></button>
   <button data-v="ext" title="Entpacken" aria-label="Entpacken"><span class="ic">📦</span><span class="lbl">Entpacken</span><span class="badge" id="ne" hidden></span></button>
   <button data-v="hist" title="Verschoben" aria-label="Verschoben"><span class="ic">✅</span><span class="lbl">Verschoben</span><span class="badge" id="nh" hidden></span></button>
@@ -415,30 +415,13 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 </form></dialog>
 
 <section id="v-dl" hidden>
+  <div id="dlpk"></div>
+  <div id="dlempty" class="empty card wide" hidden><div class="big">⬇️</div><b>Keine Downloads</b>Links oben einfügen oder per Click'n'Load aus dem Browser senden.</div>
   <div class="card wide">
     <header><span class="ico">⬇️</span><div><h2>Links hinzufügen</h2><p class="sub">Einen oder mehrere Links einfügen (HTTP, HTTPS, ddownload.com). Teile wie <code>.part01.rar</code> werden automatisch zu einem Paket gruppiert.</p></div></header>
     <textarea id="dlin" rows="4" class="mono" placeholder="https://ddownload.com/…&#10;https://…" style="width:100%"></textarea>
     <div class="bar"><input id="dlpkg" placeholder="Paketname (optional)" style="flex:1 1 200px"><button class="primary" id="dladd">➕ Hinzufügen</button><button id="dlclr">🧹 Fertige entfernen</button><span id="dlsum" class="sub"></span></div>
   </div>
-  <div id="dlpk"></div>
-  <div id="dlempty" class="empty card wide" hidden><div class="big">⬇️</div><b>Keine Downloads</b>Links oben einfügen oder per Click'n'Load aus dem Browser senden.</div>
-  <details class="card wide" id="dlcfg"><summary><b>⚙️ Download-Einstellungen &amp; Zugang</b></summary>
-    <label class="l" for="dl-dir">Zielordner für Downloads (am besten innerhalb des Quellordners, dann sortiert und entpackt MediaButler danach selbst)</label>
-    <input id="dl-dir" class="mono" style="width:100%">
-    <label class="l" for="dl-par">Gleichzeitige Downloads</label>
-    <input id="dl-par" type="number" min="1" max="8" style="width:90px">
-    <h3 style="margin:14px 0 4px">ddownload.com (Premium)</h3>
-    <label class="l" for="dl-key">API-Key (ddownload.com → Konto → API). Schnellster Weg, kein Login nötig.</label>
-    <input id="dl-key" type="password" class="mono" autocomplete="off" style="width:100%" placeholder="API-Key">
-    <label class="l" for="dl-login">Oder Benutzername und Passwort (Login-Cookies werden gespeichert)</label>
-    <input id="dl-login" autocomplete="off" placeholder="Benutzername" style="width:100%"><input id="dl-pass" type="password" autocomplete="off" placeholder="Passwort" style="width:100%;margin-top:6px">
-    <h3 style="margin:14px 0 4px">🍪 Cookies</h3>
-    <p class="sub">Gespeichert werden Login-Cookies automatisch. Du kannst auch den Cookie-Header aus dem Browser einfügen (z. B. <code>xfss=…</code>).</p>
-    <div id="dl-ck" class="sub"></div>
-    <input id="dl-ckh" placeholder="Host, z. B. ddownload.com" style="width:100%"><textarea id="dl-ckv" rows="2" class="mono" placeholder="Cookie-Header: name=wert; name2=wert2" style="width:100%;margin-top:6px"></textarea>
-    <div class="bar"><button class="primary" id="dlsave">💾 Speichern</button><button id="dltest">🔌 Zugang testen</button><span id="dlmsg" class="sub"></span></div>
-    <p class="sub" style="margin-top:10px">Click'n'Load: Port <code id="dlcnl">9666</code> veröffentlichen oder das Chrome-Plugin aus dem Ordner <code>chrome-extension/</code> nutzen (leitet Click'n'Load an diesen Server um).</p>
-  </details>
 </section>
 <section id="v-run" hidden>
   <div class="card rcard" id="rcard">
@@ -646,7 +629,24 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <header><span class="ico">📺</span><div><h2>Gemerkte Serien</h2><p class="sub">Eigene Namen, Jahr und TMDB-ID. Im Tab Sortieren auf eine erkannte Serie tippen, um eine anzulegen.</p></div></header>
     <div id="rules"></div>
   </div>
-  <div class="card">
+    <div class="card wide" id="dlcfg"><header><span class="ico">⬇️</span><div><h2>Downloads</h2><p class="sub">Zielordner, ddownload.com-Zugang und gespeicherte Cookies.</p></div></header>
+    <label class="l" for="dl-dir">Zielordner für Downloads (am besten innerhalb des Quellordners, dann sortiert und entpackt MediaButler danach selbst)</label>
+    <input id="dl-dir" class="mono" style="width:100%">
+    <label class="l" for="dl-par">Gleichzeitige Downloads</label>
+    <input id="dl-par" type="number" min="1" max="8" style="width:90px">
+    <h3 style="margin:14px 0 4px">ddownload.com (Premium)</h3>
+    <label class="l" for="dl-key">API-Key (ddownload.com → Konto → API). Schnellster Weg, kein Login nötig.</label>
+    <input id="dl-key" type="password" class="mono" autocomplete="off" style="width:100%" placeholder="API-Key">
+    <label class="l" for="dl-login">Oder Benutzername und Passwort (Login-Cookies werden gespeichert)</label>
+    <input id="dl-login" autocomplete="off" placeholder="Benutzername" style="width:100%"><input id="dl-pass" type="password" autocomplete="off" placeholder="Passwort" style="width:100%;margin-top:6px">
+    <h3 style="margin:14px 0 4px">🍪 Cookies</h3>
+    <p class="sub">Gespeichert werden Login-Cookies automatisch. Du kannst auch den Cookie-Header aus dem Browser einfügen (z. B. <code>xfss=…</code>).</p>
+    <div id="dl-ck" class="sub"></div>
+    <input id="dl-ckh" placeholder="Host, z. B. ddownload.com" style="width:100%"><textarea id="dl-ckv" rows="2" class="mono" placeholder="Cookie-Header: name=wert; name2=wert2" style="width:100%;margin-top:6px"></textarea>
+    <div class="bar"><button class="primary" id="dlsave">💾 Speichern</button><button id="dltest">🔌 Zugang testen</button><span id="dlmsg" class="sub"></span></div>
+    <p class="sub" style="margin-top:10px">Click'n'Load: Port <code id="dlcnl">9666</code> veröffentlichen oder das Chrome-Plugin aus dem Ordner <code>chrome-extension/</code> nutzen (leitet Click'n'Load an diesen Server um).</p>
+  </div>
+<div class="card">
     <header><span class="ico">🔎</span><div><h2>Metadaten-Quellen</h2><p class="sub">Zum Suchen von Name, Jahr und ID im Gruppen- und Umbenennen-Dialog. Die ID landet als <code>[tmdbid-…]</code> bzw. <code>[tvdbid-…]</code> im Ordnernamen, so erkennt Jellyfin die Serie sicher.</p></div></header>
     <label class="mon"><input type="checkbox" id="mauto"> Neue Titel automatisch abgleichen (eindeutiger Treffer wird übernommen, sonst Meldung)</label>
     <label class="mon"><input type="checkbox" id="mon-tmdb"> TMDB (Filme, Serien)</label>
@@ -712,7 +712,7 @@ function show(v){view=v;try{history.replaceState(null,"",v==="sort"?location.pat
   for(const s of["sort","dl","run","ext","hist","clean","dup","ana","sched","set"])$("v-"+s).hidden=s!==v;
   $("nav").querySelectorAll("button").forEach(b=>{const on=b.dataset.v===v;b.classList.toggle("on",on);if(on)$("vtitle").textContent=b.querySelector(".ic").textContent+" "+b.querySelector(".lbl").textContent});
   $("go").hidden=v!=="sort";$("dk-dup").hidden=v!=="dup";document.querySelector(".dock .sched").hidden=v==="dup";
-  ({sort:loadFiles,dl:loadDl,run:()=>api("/api/status").then(renderRun),ext:loadExt,hist:loadHist,clean:loadClean,dup:loadDup,ana:loadAna,sched:loadSched,set:loadSched})[v]()}
+  ({sort:loadFiles,dl:loadDl,run:()=>api("/api/status").then(renderRun),ext:loadExt,hist:loadHist,clean:loadClean,dup:loadDup,ana:loadAna,sched:loadSched,set:()=>{loadSched();loadDl(true)}})[v]()}
 $("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>{show(b.dataset.v);navOpen(false)});
 function navOpen(o){document.body.classList.toggle("navopen",o);$("menu").setAttribute("aria-expanded",o)}
 $("menu").onclick=()=>navOpen(true);$("navclose").onclick=()=>navOpen(false);$("scrim").onclick=()=>navOpen(false);
@@ -726,9 +726,14 @@ setInterval(()=>{$("menu").toggleAttribute("data-dot",!!document.querySelector("
 /* Downloads */
 const dlOpen=new Set(),DLI={wartet:"⏳",lädt:"⬇️",fertig:"✅",fehler:"⛔",pausiert:"⏸️"};
 let dlBusy=false;
+function fillDlCfg(c){$("dl-dir").value=$("dl-dir").matches(":focus")?$("dl-dir").value:c.dir;if(!$("dl-par").matches(":focus"))$("dl-par").value=c.parallel;
+    if(!$("dl-login").matches(":focus"))$("dl-login").value=c.dd_login||"";
+    $("dl-key").placeholder=c.dd_key_set?"gespeichert (zum Ändern neu eingeben)":"API-Key";$("dl-pass").placeholder=c.dd_pass_set?"gespeichert":"Passwort";$("dlcnl").textContent=c.cnl_port;
+    $("dl-ck").innerHTML=Object.keys(c.cookie_hosts).length?"Gespeicherte Cookies: "+Object.entries(c.cookie_hosts).map(([h,n])=>`<span class="tag">${esc(h)} · ${n}</span><button class="rn" data-ckdel="${esc(h)}">✕</button>`).join(" "):"Noch keine Cookies gespeichert."}
 const spd=n=>n>0?fmt(n)+"/s":"";
 async function loadDl(cfg){try{const r=await api("/api/dl");
   setBadge("ndl",r.active);
+  const c=r.conf;if((cfg||!dlBusy)&&(view==="dl"||view==="set"))fillDlCfg(c);
   if(view!=="dl")return;
   const pk=r.packages;$("dlempty").hidden=!!pk.length;
   const tot=pk.reduce((a,p)=>a+p.speed,0);$("dlsum").textContent=pk.length?`${pk.length} Paket(e)${tot?" · "+spd(tot):""}`:"";
@@ -739,10 +744,6 @@ async function loadDl(cfg){try{const r=await api("/api/dl");
      <div class="sub">${p.finished}/${p.total} Teile · ${fmt(p.done)}${p.size?" von "+fmt(p.size):""}${p.speed?" · "+spd(p.speed):""}</div>
      <div class="bar" style="margin:8px 0 0"><button data-act="resume" data-pkg="${esc(p.name)}">▶️ Starten</button><button data-act="pause" data-pkg="${esc(p.name)}">⏸️ Pause</button><button data-act="retry" data-pkg="${esc(p.name)}">↻ Neu versuchen</button><button class="danger" data-act="remove" data-pkg="${esc(p.name)}">🗑️ Entfernen</button><button data-tgp="${esc(p.name)}">${open?"▾ Teile verbergen":"▸ Teile zeigen"}</button></div>
      ${open?`<div class="table" style="margin-top:8px"><table><tbody>${p.items.map(i=>`<tr><td class="f">${esc(i.name||i.url)}${i.err?`<div class="sub" style="color:var(--bad,#e58)">${esc(i.err)}</div>`:""}</td><td>${DLI[i.status]||""} ${i.status}</td><td class="s">${i.size?fmt(i.done)+" / "+fmt(i.size):""} ${spd(i.speed)}</td><td><button data-act="${i.status==="lädt"?"pause":"retry"}" data-id="${i.id}">${i.status==="lädt"?"⏸️":"↻"}</button><button data-act="remove" data-id="${i.id}">🗑️</button></td></tr>`).join("")}</tbody></table></div>`:""}</div>`}).join("");
-  const c=r.conf;if(cfg||!dlBusy){$("dl-dir").value=$("dl-dir").matches(":focus")?$("dl-dir").value:c.dir;if(!$("dl-par").matches(":focus"))$("dl-par").value=c.parallel;
-    if(!$("dl-login").matches(":focus"))$("dl-login").value=c.dd_login||"";
-    $("dl-key").placeholder=c.dd_key_set?"gespeichert (zum Ändern neu eingeben)":"API-Key";$("dl-pass").placeholder=c.dd_pass_set?"gespeichert":"Passwort";$("dlcnl").textContent=c.cnl_port;
-    $("dl-ck").innerHTML=Object.keys(c.cookie_hosts).length?"Gespeicherte Cookies: "+Object.entries(c.cookie_hosts).map(([h,n])=>`<span class="tag">${esc(h)} · ${n}</span><button class="rn" data-ckdel="${esc(h)}">✕</button>`).join(" "):"Noch keine Cookies gespeichert."}
  }catch{}}
 $("dlpk").onclick=async e=>{const t=e.target.closest("button");if(!t)return;
   if(t.dataset.tgp){dlOpen.has(t.dataset.tgp)?dlOpen.delete(t.dataset.tgp):dlOpen.add(t.dataset.tgp);return loadDl()}
