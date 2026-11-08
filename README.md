@@ -27,3 +27,12 @@ Die Web-Oberfläche liegt in `web/page.html`. `testdata/golden.json` enthält Re
 Jeder Push auf `main` mit Code-Änderungen startet `.github/workflows/go-release.yml` (Tests, Build für amd64 und arm64, neues Release `v<Laufnummer>`).
 Der Knopf in den Einstellungen lädt das passende Asset `mediabutler-linux-<arch>`, sichert die alte Datei (`DATA_DIR/mediabutler.bak`), ersetzt das Programm und beendet es; `restart: unless-stopped` startet den Container neu.
 Ein neues Image (`docker compose build`) ersetzt solche Updates wieder. Für ein privates Repo braucht der Knopf ein Token mit Lesezugriff auf Contents.
+
+
+## Download-Manager
+
+Neuer Bereich „Downloads": HTTP/HTTPS-Links und ddownload.com (Premium per API-Key oder Login). Teile wie `.part01.rar` werden zu einem Paket gruppiert, Downloads sind wiederaufnehmbar (`.mbdl`-Datei bis zum Abschluss). Standard-Zielordner ist `<SOURCE_DIR>/Downloads`, dort sortiert und entpackt MediaButler danach wie gewohnt.
+
+- **Cookies** (Hoster-Login) werden dauerhaft in `cookies.json` im Datenordner gespeichert. Zusätzlich lässt sich ein Cookie-Header aus dem Browser einfügen.
+- **Click'n'Load**: Port `9666` veröffentlichen (`CNL_PORT`, `0` schaltet ihn ab) oder das Chrome-Plugin in `chrome-extension/` nutzen (Chrome → Erweiterungen → Entwicklermodus → „Entpackte Erweiterung laden"). Das Plugin leitet `127.0.0.1:9666` auf den Server um und bietet „An MediaButler senden" im Kontextmenü. Server-Adresse und `API_KEY` im Plugin eintragen.
+- Testumgebung: `DDL_BASE` und `DDL_API` überschreiben die ddownload-Adressen.

@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+      - "9666:9666"   # Click'n'Load
     environment:
       TZ: Europe/Berlin          # Zeitzone für den Cron-Zeitplan
       SOURCE_DIR: /incoming

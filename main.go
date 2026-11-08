@@ -41,6 +41,8 @@ func main() {
 	go a.watcher()
 	go a.autoLoop()
 	go a.tgPoller()
+	a.dl = a.dlInit()
+	a.dl.cnlServer()
 	port := env("PORT", "8080")
 	fmt.Printf("MediaButler (Go) %s auf :%s – Quelle %s, Ziel %s\n", version, port, src, tgt)
 	if err := http.ListenAndServe(":"+port, a.routes()); err != nil {
@@ -54,7 +56,8 @@ func eq(x, y string) bool { return subtle.ConstantTimeCompare([]byte(x), []byte(
 func (a *App) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.pass == "" || publicPaths[r.URL.Path] ||
-			(a.apiKey != "" && r.URL.Path == "/api/hook" && eq(r.Header.Get("X-API-Key"), a.apiKey)) {
+			(a.apiKey != "" && (r.URL.Path == "/api/hook" || r.URL.Path == "/api/dl/add" || strings.HasPrefix(r.URL.Path, "/api/cnl")) && eq(r.Header.Get("X-API-Key"), a.apiKey)) ||
+			(r.Method == "OPTIONS" && strings.HasPrefix(r.URL.Path, "/api/cnl")) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -126,6 +129,10 @@ func (a *App) routes() http.Handler {
 	a.dupRoutes(get, post)
 	a.metaRoutes(get, post)
 	a.autoRoutes(get, post)
+	a.dlRoutes(get, post)
+	for _, p := range a.dl.opt {
+		mux.HandleFunc("OPTIONS "+p, func(w http.ResponseWriter, r *http.Request) { cors(w); w.WriteHeader(204) })
+	}
 	a.notifyRoutes(post)
 
 	page, _ := webFS.ReadFile("web/page.html")
@@ -327,3 +334,5 @@ func (a *App) rulesOut() []Rule {
 	}
 	return r
 }
+
+func (a *App) dlRoutes(get, post func(string, http.HandlerFunc)) { a.dl.routes(get, post) }

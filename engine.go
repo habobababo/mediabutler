@@ -54,6 +54,7 @@ type App struct {
 	minAge         time.Duration
 	user, pass     string
 	apiKey         string
+	dl             *dlManager
 	version        string
 	build          string
 
