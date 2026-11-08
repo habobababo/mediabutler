@@ -33,3 +33,11 @@ Die Go-Version aktualisiert sich nicht aus dem Quelltext, sondern aus einem GitH
 Der Knopf in den Einstellungen lädt das passende Asset, sichert die alte Datei (`DATA_DIR/mediabutler.bak`), ersetzt das Programm und beendet es;
 `restart: unless-stopped` startet den Container neu. Ein neues Image (`docker compose build`) ersetzt solche Updates wieder.
 Für ein privates Repo wird wie bisher ein Token mit Lesezugriff auf Contents gebraucht.
+
+## Starten mit Docker
+
+    cd go
+    docker compose up -d --build
+
+`go/docker-compose.yml` ist die Go-Variante der Compose-Datei (gleiche Umgebungsvariablen und Volumes, kein `app.py`-Mount nötig).
+Die Daten in `./data` sind mit der Python-Version austauschbar.
