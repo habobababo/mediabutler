@@ -1429,6 +1429,8 @@ function drawDisk(d){const el=$("disk");el.hidden=!d;if(!d)return;
 function eta(s){if(!s.done||!s.elapsed)return"";const r=s.elapsed*(s.total-s.done)/s.done;return r>=60?`noch ${Math.round(r/60)} min`:`noch ${Math.max(1,Math.round(r))} s`}
 function drawHprog(s,pct){const ex=s.extract||{},rows=[];
   if(s.running)rows.push({cls:"live",l:`⚡ Kopieren · ${s.files_done} von ${s.files_total} Dateien`,t:[pct.toFixed(0)+" %",s.speed?fmt(s.speed)+"/s":"",eta(s)].filter(Boolean).join(" · "),p:pct,sub:s.current||""});
+  const dl=s.downloads||{};
+  if(dl.active||dl.waiting)rows.push({cls:dl.active?"live":"",l:`⬇️ Download${dl.name?" · "+dl.name:""}`,t:dl.active?[Math.round(dl.pct)+" %",dl.speed?fmt(dl.speed)+"/s":""].filter(Boolean).join(" · "):"",p:dl.pct||0,sub:dl.active?(dl.active>1||dl.waiting?`${dl.active} aktiv${dl.waiting?", "+dl.waiting+" warten":""}`:""):`${dl.waiting} Download(s) warten`});
   if(ex.running)rows.push({cls:"live",l:`📦 Entpacken${ex.name?" · "+ex.name:""}`,t:(ex.pct||0)+" %",p:ex.pct||0,sub:ex.n>1?`${ex.n-1} weitere warten`:""});
   else if(ex.n)rows.push({cls:"",l:`📦 ${ex.n} Archiv(e) warten aufs Entpacken`,t:"",p:0,sub:""});
   const wn=(s.waiting||[]).length;if(wn&&!s.running)rows.push({cls:"",l:`📥 ${wn} Auftrag/Aufträge in der Warteschlange`,t:"",p:0,sub:""});

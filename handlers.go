@@ -428,7 +428,7 @@ func (a *App) hStatus(w http.ResponseWriter, r *http.Request) {
 		"files_done": j.FilesDone, "current": j.Current, "current_size": j.CurrentSize, "current_done": j.CurrentDone, "speed": j.Speed,
 		"errors": errs, "finished": j.Finished, "started": ts(j.Started), "ended": ts(j.Ended), "source": j.Source, "counts": counts,
 		"elapsed": el, "schedule": M{"enabled": c.Enabled, "cron": c.Cron, "next": next, "last": c.LastResult},
-		"extract": a.exSummary(), "disk": a.diskInfo(), "batches": nb, "waiting": waiting})
+		"extract": a.exSummary(), "downloads": a.dlSummary(), "disk": a.diskInfo(), "batches": nb, "waiting": waiting})
 }
 
 func (a *App) hJobQueue(w http.ResponseWriter, r *http.Request) {
@@ -576,3 +576,10 @@ func (a *App) hSettingsSet(w http.ResponseWriter, r *http.Request) {
 }
 
 var _ = strconv.Itoa
+
+func (a *App) dlSummary() M {
+	if a.dl == nil {
+		return M{"active": 0, "waiting": 0}
+	}
+	return a.dl.summary()
+}

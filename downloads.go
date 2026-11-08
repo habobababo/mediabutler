@@ -74,7 +74,7 @@ var (
 	ddBase   = strings.TrimRight(env("DDL_BASE", "https://ddownload.com"), "/")
 	ddAPI    = strings.TrimRight(env("DDL_API", "https://api-v2.ddownload.com/api"), "/")
 	reURL    = regexp.MustCompile(`https?://[^\s"'<>\\]+`)
-	reDDCode = regexp.MustCompile(`^/([a-zA-Z0-9]{12})(?:/|$)`)
+	reDDCode = regexp.MustCompile(`(?:^|/)([a-zA-Z0-9]{12})(?:/|$|\.)`)
 )
 
 // ---------- Cookie-Jar mit Persistenz ----------
@@ -388,35 +388,17 @@ func (d *dlManager) resolveDD(ctx context.Context, it *DLItem, conf DLConf) (*re
 	}
 	code := m[1]
 	if conf.DDKey != "" {
-		var info struct {
-			Result []struct {
-				Name string
-				Size any
-			} `json:"result"`
+		r, err := d.ddViaAPI(ctx, conf.DDKey, code)
+		if err == nil {
+			return r, nil
 		}
-		_ = d.apiJSON(ctx, fmt.Sprintf("%s/file/info?key=%s&file_code=%s", ddAPI, url.QueryEscape(conf.DDKey), code), &info)
-		var dl struct {
-			Msg    string `json:"msg"`
-			Status int    `json:"status"`
-			Result struct {
-				URL  string `json:"url"`
-				Size any    `json:"size"`
-			} `json:"result"`
+		// Datei gehört nicht zum eigenen Account ("No file"): erst Klon im eigenen Account, dann Login-Weg
+		if cr, err2 := d.ddViaClone(ctx, conf.DDKey, code); err2 == nil {
+			return cr, nil
 		}
-		if err := d.apiJSON(ctx, fmt.Sprintf("%s/file/direct_link?key=%s&file_code=%s", ddAPI, url.QueryEscape(conf.DDKey), code), &dl); err != nil {
+		if conf.DDLogin == "" || conf.DDPass == "" {
 			return nil, err
 		}
-		if dl.Result.URL == "" {
-			return nil, fmt.Errorf("ddownload API: %s", firstNonEmpty(dl.Msg, "kein Link erhalten"))
-		}
-		r := &resolved{url: dl.Result.URL, size: anyInt(dl.Result.Size)}
-		if len(info.Result) > 0 {
-			r.name = info.Result[0].Name
-			if r.size == 0 {
-				r.size = anyInt(info.Result[0].Size)
-			}
-		}
-		return r, nil
 	}
 	// Login/Cookies: Seite laden, Direktlink suchen
 	u, _ := url.Parse(ddBase)
@@ -1176,4 +1158,89 @@ func (d *dlManager) accounts(ctx context.Context, force bool) []M {
 	d.acc, d.accT = out, time.Now()
 	d.mu.Unlock()
 	return out
+}
+
+type ddDirect struct {
+	Msg    string `json:"msg"`
+	Status int    `json:"status"`
+	Result struct {
+		URL  string `json:"url"`
+		Size any    `json:"size"`
+	} `json:"result"`
+}
+
+func (d *dlManager) ddViaAPI(ctx context.Context, key, code string) (*resolved, error) {
+	var dl ddDirect
+	if err := d.apiJSON(ctx, fmt.Sprintf("%s/file/direct_link?key=%s&file_code=%s", ddAPI, url.QueryEscape(key), code), &dl); err != nil {
+		return nil, err
+	}
+	if dl.Result.URL == "" {
+		return nil, fmt.Errorf("ddownload API (%s): %s", code, firstNonEmpty(dl.Msg, "kein Link erhalten"))
+	}
+	r := &resolved{url: dl.Result.URL, size: anyInt(dl.Result.Size)}
+	var info struct {
+		Result []struct {
+			Name string
+			Size any
+		} `json:"result"`
+	}
+	if d.apiJSON(ctx, fmt.Sprintf("%s/file/info?key=%s&file_code=%s", ddAPI, url.QueryEscape(key), code), &info) == nil && len(info.Result) > 0 {
+		r.name = info.Result[0].Name
+		if r.size == 0 {
+			r.size = anyInt(info.Result[0].Size)
+		}
+	}
+	return r, nil
+}
+
+// ddViaClone klont eine fremde Datei in den eigenen Account und holt den Direktlink des Klons.
+func (d *dlManager) ddViaClone(ctx context.Context, key, code string) (*resolved, error) {
+	var cl struct {
+		Status int            `json:"status"`
+		Msg    string         `json:"msg"`
+		Result map[string]any `json:"result"`
+	}
+	if err := d.apiJSON(ctx, fmt.Sprintf("%s/file/clone?key=%s&file_code=%s", ddAPI, url.QueryEscape(key), code), &cl); err != nil {
+		return nil, err
+	}
+	nc := ""
+	for _, k := range []string{"filecode", "file_code", "code"} {
+		if v, ok := cl.Result[k].(string); ok && v != "" {
+			nc = v
+		}
+	}
+	if nc == "" {
+		return nil, fmt.Errorf("Klonen nicht möglich: %s", firstNonEmpty(cl.Msg, "keine Antwort"))
+	}
+	return d.ddViaAPI(ctx, key, nc)
+}
+
+// summary: Gesamtfortschritt aller aktiven/wartenden Downloads für den Header
+func (d *dlManager) summary() M {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var active, waiting int
+	var done, size, speed int64
+	name := ""
+	for _, it := range d.f.Items {
+		switch it.Status {
+		case "lädt":
+			active++
+			if name == "" {
+				name = it.Pkg
+			}
+		case "wartet":
+			waiting++
+		default:
+			continue
+		}
+		done += it.Done
+		size += it.Size
+		speed += it.Speed
+	}
+	pct := 0.0
+	if size > 0 {
+		pct = float64(done) * 100 / float64(size)
+	}
+	return M{"active": active, "waiting": waiting, "done": done, "size": size, "speed": speed, "pct": pct, "name": name}
 }
