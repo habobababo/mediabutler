@@ -124,6 +124,7 @@ td.s{white-space:nowrap;color:var(--muted)}
 select.cat{border-color:var(--cc);color:var(--cc);font-weight:700;background:color-mix(in srgb,var(--cc) 9%,var(--surface))}
 .tag{display:inline-flex;gap:4px;align-items:center;padding:2px 10px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--soft);color:var(--muted)}
 .tag.cat{color:var(--cc);background:color-mix(in srgb,var(--cc) 14%,var(--surface))}
+.amit{padding:8px 0;border-top:1px solid var(--line)}.amit .chips{margin-top:6px}
 .tag.ok{background:var(--okbg);color:var(--ok)}.tag.warn{background:var(--warnbg);color:var(--warn)}.tag.bad{background:var(--badbg);color:var(--bad)}
 .empty{padding:40px 20px;text-align:center;color:var(--muted)}
 .empty .big{font-size:42px;line-height:1.2}.empty b{display:block;color:var(--ink);font-size:17px;margin:4px 0}
@@ -285,7 +286,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <button data-v="hist" title="Verschoben" aria-label="Verschoben"><span class="ic">✅</span><span class="lbl">Verschoben</span><span class="badge" id="nh" hidden></span></button>
   <span class="grp">Bibliothek</span>
   <button data-v="clean" title="Aufräumen" aria-label="Aufräumen"><span class="ic">🧹</span><span class="lbl">Aufräumen</span><span class="badge" id="nc" hidden></span></button>
-  <button data-v="dup" title="Duplikate" aria-label="Duplikate"><span class="ic">🔁</span><span class="lbl">Duplikate</span><span class="badge" id="nd" hidden></span></button>
+  <button data-v="dup" title="Duplikate" aria-label="Duplikate"><span class="ic">👯</span><span class="lbl">Duplikate</span><span class="badge" id="nd" hidden></span></button>
   <button data-v="ana" title="Analyse" aria-label="Analyse"><span class="ic">📊</span><span class="lbl">Analyse</span></button>
   <span class="grp">System</span>
   <button data-v="sched" title="Zeitplan" aria-label="Zeitplan"><span class="ic">⏰</span><span class="lbl">Zeitplan</span></button>
@@ -317,12 +318,13 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
     <div class="chips" id="tabs"></div>
   </div>
   <div class="bar fq"><input type="search" id="fq" placeholder="🔍 Suchen: Dateiname, Serie oder Pfad" autocomplete="off" aria-label="Dateien suchen"><button id="fmark" hidden>☑️ Treffer markieren</button><span id="fqn" class="sub"></span><button id="reload" title="Dateiliste neu einlesen">↻ Neu laden</button></div>
-  <section class="tbox" aria-labelledby="tboxh"><h3 id="tboxh">☑️ Markierungen &amp; Ansicht</h3>
+  <section class="tbox" aria-labelledby="tboxh" hidden><h3 id="tboxh">☑️ Markierungen &amp; Ansicht</h3>
   <div class="bar tools">
     <button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button><button id="inv" title="Auswahl der sichtbaren Dateien umdrehen">🔁 Umkehren</button>
     <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button><button id="shc" class="toggle" hidden>✅ Schon kopierte zeigen (<span id="shcn">0</span>)</button>
     <span id="sel" class="sub"></span><span class="sub hide-m" style="margin-left:auto">💡 Shift+Klick markiert einen Bereich, Strg+A alles</span>
   </div></section>
+  <div id="ambar" class="bulk" hidden></div>
   <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
   <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="gbtn">👥 Neue Gruppe</button><button id="dbtn" class="danger">🗑️ Löschen</button><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
   <div class="table"><table>
@@ -457,14 +459,14 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 
 <section id="v-dup" hidden>
   <p class="sub" style="margin-bottom:12px">Sucht in der Bibliothek nach Dateien, die doppelt oder fast gleich vorhanden sind: gleicher Titel, gleiche Dateigröße oder ähnlicher Name. Der Scan läuft nur, wenn du ihn startest. Gelöscht wird nur, was du markierst.</p>
-  <div class="bar"><button class="primary" id="dstart">🔁 Duplikate suchen</button><button id="dstop" class="danger" hidden>Abbrechen</button><span id="dmeta" class="sub"></span></div>
+  <div class="bar"><button class="primary" id="dstart">👯 Duplikate suchen</button><button id="dstop" class="danger" hidden>Abbrechen</button><span id="dmeta" class="sub"></span></div>
   <div id="dmount" class="banner bad" hidden>⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>
   <div id="derr" class="banner bad" hidden></div>
   <div id="dprog" class="card wide" hidden>
     <div class="row"><span id="dtxt"></span><b id="dpct"></b></div>
     <div class="prog run"><i id="dpb" style="width:100%"></i></div>
   </div>
-  <div id="dempty" class="empty card wide" hidden><div class="big">🔁</div><b id="det">Noch kein Scan</b><span id="des"></span></div>
+  <div id="dempty" class="empty card wide" hidden><div class="big">👯</div><b id="det">Noch kein Scan</b><span id="des"></span></div>
   <div id="dbody" hidden>
     <div class="astats">
       <div class="tile"><span class="sub">Gruppen</span><b id="d-g">0</b></div>
@@ -594,6 +596,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   </div>
   <div class="card">
     <header><span class="ico">🔎</span><div><h2>Metadaten-Quellen</h2><p class="sub">Zum Suchen von Name, Jahr und ID im Gruppen- und Umbenennen-Dialog. Die ID landet als <code>[tmdbid-…]</code> bzw. <code>[tvdbid-…]</code> im Ordnernamen, so erkennt Jellyfin die Serie sicher.</p></div></header>
+    <label class="mon"><input type="checkbox" id="mauto"> Neue Titel automatisch abgleichen (eindeutiger Treffer wird übernommen, sonst Meldung)</label>
     <label class="mon"><input type="checkbox" id="mon-tmdb"> TMDB (Filme, Serien)</label>
     <label class="mon"><input type="checkbox" id="mon-tvdb"> TVDB (Serien, Filme)</label>
     <label class="mon"><input type="checkbox" id="mon-anilist"> AniList (Anime, ohne Key)</label>
@@ -697,7 +700,7 @@ $("exgo").onclick=()=>show("ext");
 const unclearN=()=>files.filter(f=>!f.category).length;
 let showCopied=false,emptyHtml="";const lastRow={v:null},lastGrp={v:null};
 const checked=f=>f.sel===true;
-let grouped=false,sgrouped=true,groups=[],sgroups=[],sopen=new Set(["","d:"]);try{grouped=localStorage.getItem("sort_grp")==="1";const sg=localStorage.getItem("sort_sgrp");sgrouped=sg===null?!grouped:sg==="1";if(sgrouped)grouped=false}catch{}
+let grouped=true,sgrouped=false,groups=[],sgroups=[],sopen=new Set(["","d:"]);
 function stats(){const u=unclearN();
   $("st-ready").textContent=files.length-u;$("st-clar").textContent=u;
   $("st-clar-box").classList.toggle("alert",u>0);setBadge("ns",u)}
@@ -712,7 +715,16 @@ async function loadFiles(){
   $("bchips").innerHTML=cats.map(c=>`<button class="chip" data-c="${c}">${ICON[c]} ${c}</button>`).join("");
   $("bchips").querySelectorAll("button").forEach(b=>b.onclick=()=>assign(files.filter(checked),b.dataset.c));
   $("grp").classList.toggle("on",grouped);$("sgrp").classList.toggle("on",sgrouped);
-  tabs();render()}
+  loadAuto();tabs();render()}
+async function loadAuto(){try{const r=await api("/api/automatch"),b=$("ambar");
+  const p=r.enabled?r.pending:[];b.hidden=!p.length;if(!p.length){b.innerHTML="";return}
+  b.innerHTML=`<b>🔎 ${p.length} Titel bitte prüfen</b><span class="sub">Kein eindeutiger Treffer bei den Metadaten-Quellen</span>`+p.map(it=>`<div class="amit"><div><b>${esc(it.detected)}</b>${it.year?" ("+esc(it.year)+")":""} <span class="tag ${it.status==="abweichend"?"warn":"bad"}">${it.status==="abweichend"?"⚠️ abweichend":"❓ nicht gefunden"}</span></div>
+    <div class="chips">${(it.cands||[]).map((c,i)=>`<button class="chip" data-ak="${esc(it.key)}" data-ai="${i}">${esc(c.title)}${c.year?" ("+esc(c.year)+")":""} <small>${esc(c.src)} · ${esc(c.kind)}</small></button>`).join("")}
+    <button class="chip" data-aretry="${esc(it.key)}">↻ Neu suchen</button><button class="chip" data-adis="${esc(it.key)}">Ignorieren</button></div></div>`).join("");
+  b.querySelectorAll("[data-ai]").forEach(x=>x.onclick=async()=>{try{await api("/api/automatch/apply",{key:x.dataset.ak,idx:+x.dataset.ai});toast("Zugeordnet","ok");loadFiles()}catch(e){toast(e.message,"bad")}});
+  b.querySelectorAll("[data-adis]").forEach(x=>x.onclick=async()=>{await api("/api/automatch/dismiss",{key:x.dataset.adis});loadFiles()});
+  b.querySelectorAll("[data-aretry]").forEach(x=>x.onclick=async()=>{await api("/api/automatch/retry",{key:x.dataset.aretry});toast("Suche läuft …","ok");setTimeout(loadFiles,4000)});
+ }catch{}}
 function seriesBar(){
   const m=new Map();
   visible().forEach(f=>{const s=f.series;if(!s)return;const e=m.get(s.key)||{key:s.key,names:{},files:[],cats:{}};
@@ -861,8 +873,14 @@ function drawRules(){
   $("rules").querySelectorAll("button").forEach(b=>b.onclick=async()=>{
     try{rulesCache=(await api("/api/rules/delete",{key:rulesCache[b.dataset.r].key})).rules;drawRules();toast("Entfernt","ok")}catch(e){toast(e.message,"bad")}})}
 const dupN=()=>files.filter(f=>f.dup&&f.dup.n).length;
+const autoTag=f=>{const a=f.auto;if(!a)return"";
+  if(a.status==="zugeordnet")return `<span class="tag ok" title="${a.src==="automatisch"?"automatisch zugeordnet":"Regel"}">🔗 ${esc(a.name)}${a.year?" ("+esc(a.year)+")":""}${a.id?" · "+esc(a.id.replace(/^tvdb:/,"TVDB "))+(/^tvdb:/.test(a.id)?"":" TMDB"):""}</span>`;
+  if(a.status==="abweichend")return `<span class="tag warn">⚠️ abweichend${a.n?" · "+a.n+" Vorschläge":""}</span>`;
+  if(a.status==="nicht gefunden")return `<span class="tag bad">❓ nicht gefunden</span>`;
+  return `<span class="tag">ignoriert</span>`};
+const autoOf=fs=>{const l=fs.map(f=>f.auto).filter(Boolean);if(!l.length)return null;return fs.find(f=>f.auto&&f.auto.status!=="zugeordnet")||fs.find(f=>f.auto)};
 const dupTags=f=>{const d=f.dup;if(!d||!d.n)return"";const ex=d.level==="exakt";
-  return `<div class="dupl"><span class="tag ${ex?"bad":"warn"}">${ex?"🔁 Schon in der Bibliothek":"≈ Ähnliches vorhanden"}</span>`
+  return `<div class="dupl"><span class="tag ${ex?"bad":"warn"}">${ex?"👯 Duplikat: schon in der Bibliothek":"≈ Ähnliches vorhanden"}</span>`
     +d.items.map(m=>`<div class="dupm"><code>${esc(m.path)}</code> <span class="sub">${fmt(m.size)}${m.level!=="exakt"?" · ähnlich":""}</span></div>`).join("")
     +(d.n>d.items.length?`<div class="sub">+ ${d.n-d.items.length} weitere</div>`:"")+`</div>`};
 function tabs(){
@@ -871,7 +889,7 @@ function tabs(){
   if(filter==="Doppelt"&&!dn)filter="Alle";
   const kinds=[...(u?["Klärung"]:[]),...(dn?["Doppelt"]:[])];
   $("tabs").hidden=!kinds.length;
-  $("tabs").innerHTML=kinds.map(c=>`<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":"Alle"}" data-k="${c}">${c==="Klärung"?"❓ Braucht dich":"🔁 Schon da?"} <i>${c==="Klärung"?u:dn}</i></button>`).join("");
+  $("tabs").innerHTML=kinds.map(c=>`<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":"Alle"}" data-k="${c}">${c==="Klärung"?"❓ Braucht dich":"👯 Duplikate"} <i>${c==="Klärung"?u:dn}</i></button>`).join("");
   $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=filter===b.dataset.k?"Alle":b.dataset.k;tabs();render()});
   stats();seriesBar()}
 let fqs="";
@@ -880,7 +898,7 @@ const visible=()=>files.filter(f=>(filter==="Alle"||(filter==="Klärung"?!f.cate
 const catOpts=(first)=>`<option value="">${first}</option>`+cats.map(c=>`<option value="${c}">${ICON[c]} ${c}</option>`).join("");
 function row(f,short,extra="",cls=""){const i=files.indexOf(f),name=short&&f.path.includes("/")?f.path.slice(f.path.indexOf("/")+1):f.path;return `<tr class="${cls}" data-cat="${esc(f.category)}">
    <td class="chk"><input type="checkbox" data-i="${i}" ${checked(f)?"checked":""} aria-label="markieren"></td>
-   <td class="f" title="${esc(f.path)}">${esc(name)}${extra}${dupTags(f)}</td>
+   <td class="f" title="${esc(f.path)}">${esc(name)}${autoTag(f)?" "+autoTag(f):""}${extra}${dupTags(f)}</td>
    <td class="c"><select class="cat" data-i="${i}" aria-label="Kategorie">${f.category?"":'<option value="" selected>Kategorie wählen…</option>'}${cats.map(c=>`<option value="${c}" ${c===f.category?"selected":""}>${ICON[c]} ${c}</option>`).join("")}</select></td>
    <td class="t">${f.category?esc(f.target):'<span class="tag warn">❓ Unklar</span> Wohin gehört das?'}</td><td class="s">${fmt(f.size)}</td></tr>`}
 function refreshGroups(){
@@ -905,7 +923,7 @@ function render(){
       const summ=Object.entries(e.cats).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
       const open=sopen.has(e.key)||!!fqs,dir=commonFolder(fs);
       html+=`<tr class="grow sg${e.gap?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
-        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Folgen ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
+        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Folgen ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> ${(()=>{const x=autoOf(fs);return x?autoTag(x):""})()} <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
         ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${new Set(fs.map(f=>f.series&&f.series.rkey).filter(Boolean)).size>1?`<button class="rn" data-split="${gi}" title="Zusammenlegung aufheben">✂️ Aufteilen</button>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
         <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
         +(open?fs.map(f=>row(f,false)).join(""):"")})
@@ -918,7 +936,7 @@ function render(){
       fs.forEach(f=>{const c=f.category||"?";cnt[c]=(cnt[c]||0)+1});
       const summ=Object.entries(cnt).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
       html+=`<tr class="grow fg${one&&gaps(fs).bad.length?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Ordner markieren"></td>
-        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Dateien ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📁 <b>${k?esc(k):"Lose Dateien"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div>${one?gapHtml(fs):""}</td>
+        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Dateien ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📁 <b>${k?esc(k):"Lose Dateien"}</b> ${(()=>{const x=autoOf(fs);return x?autoTag(x):""})()} <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div>${one?gapHtml(fs):""}</td>
         <td class="c"><select data-g="${gi}" aria-label="Ganzen Ordner zuordnen">${catOpts("Ordner zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
         +(open?fs.map(f=>row(f,true)).join(""):"")})
   }else html=list.map(f=>row(f)).join("");
@@ -1378,10 +1396,10 @@ async function metaSearch(p){
 document.querySelectorAll("button[data-mp]").forEach(b=>b.onclick=()=>metaSearch(b.dataset.mp));
 async function loadMeta(){try{const m=await api("/api/meta");
   for(const k of Object.keys(m.names))$("mon-"+k).checked=m.on[k];
-  $("mkey-tmdb").value="";$("mkey-tmdb").placeholder=m.tmdb_set?"gespeichert (zum Ändern neu eingeben)":"API-Key oder Lesetoken";
+  $("mauto").checked=m.auto!==false;$("mkey-tmdb").value="";$("mkey-tmdb").placeholder=m.tmdb_set?"gespeichert (zum Ändern neu eingeben)":"API-Key oder Lesetoken";
   $("mkey-tvdb").value="";$("mkey-tvdb").placeholder=m.tvdb_set?"gespeichert (zum Ändern neu eingeben)":"API-Key"}catch{}}
 async function saveMeta(){const on={};["tmdb","tvdb","anilist","jikan"].forEach(k=>on[k]=$("mon-"+k).checked);
-  await api("/api/meta/config",{on,tmdb_key:$("mkey-tmdb").value,tvdb_key:$("mkey-tvdb").value});await loadMeta()}
+  await api("/api/meta/config",{auto:$("mauto").checked,on,tmdb_key:$("mkey-tmdb").value,tvdb_key:$("mkey-tvdb").value});await loadMeta()}
 $("msave").onclick=async()=>{try{await saveMeta();toast("Gespeichert","ok")}catch(e){toast(e.message,"bad")}};
 $("mtest").onclick=async()=>{$("mres").textContent="Teste …";
   try{await saveMeta();const r=await api("/api/meta/search",{q:"The Office",kind:"all"});

@@ -658,6 +658,7 @@ func (a *App) trigger(source string) (bool, string) {
 		a.alertOnce("target", true, fmt.Sprintf("🚨 Handlungsbedarf – MediaButler\nDas Ziel %s ist nicht erreichbar. Ist das NFS-Share eingebunden? Bis dahin wird nichts kopiert.", a.target), "")
 		return false, fmt.Sprintf("Ziel %s nicht erreichbar (NFS gemountet?)", a.target)
 	}
+	a.autoMatchCycle(20)
 	items, unclear := a.scan()
 	a.unclearNotice(unclear)
 	n, waits := a.enqueue(items, source)

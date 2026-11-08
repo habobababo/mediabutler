@@ -39,6 +39,7 @@ func main() {
 	go a.scheduler()
 	go a.extractLoop()
 	go a.watcher()
+	go a.autoLoop()
 	go a.tgPoller()
 	port := env("PORT", "8080")
 	fmt.Printf("MediaButler (Go) %s auf :%s – Quelle %s, Ziel %s\n", version, port, src, tgt)
@@ -124,6 +125,7 @@ func (a *App) routes() http.Handler {
 	a.exRoutes(get, post)
 	a.dupRoutes(get, post)
 	a.metaRoutes(get, post)
+	a.autoRoutes(get, post)
 	a.notifyRoutes(post)
 
 	page, _ := webFS.ReadFile("web/page.html")

@@ -519,7 +519,7 @@ func (a *App) announceNew(items []item) {
 	}
 	txt := fmt.Sprintf("📥 MediaButler: %d neue Datei(en) bereit (%s)\n%s\n%s\n%s", len(items), hsize(float64(size)), countCats(dsts), strings.Join(names, "\n"), when)
 	if dups > 0 {
-		txt += fmt.Sprintf("\n🔁 %d davon gibt es schon (oder ähnlich) in der Bibliothek", dups)
+		txt += fmt.Sprintf("\n👯 %d davon gibt es schon (oder ähnlich) in der Bibliothek", dups)
 	}
 	txt += a.linkLine("sort")
 	a.notifyW(txt, "tg_new", true, false)

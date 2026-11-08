@@ -63,6 +63,7 @@ func (a *App) hFiles(w http.ResponseWriter, r *http.Request) {
 	cm, busy, bl := a.copied(), a.busySrc(), a.extractBlocked()
 	out := []M{}
 	shows := map[string]bool{}
+	ast, autoCache := a.autoLoad(), map[string]M{}
 	for _, rel := range walkFiles(a.source) {
 		name := path.Base(rel)
 		if !videoExt[lowerExt(name)] || reSample.MatchString(name) || hiddenRel(rel) || exBlocked(rel, bl) {
@@ -81,6 +82,17 @@ func (a *App) hFiles(w http.ResponseWriter, r *http.Request) {
 		if si != nil && tgt != "" {
 			shows[showDir(tgt)] = true
 		}
+		var auto any
+		if sub, ok := a.autoSubject(rel, cat); ok && cat != "" {
+			ai, seen := autoCache[sub.key]
+			if !seen {
+				ai = a.autoInfo(sub, ast)
+				autoCache[sub.key] = ai
+			}
+			if ai != nil {
+				auto = ai
+			}
+		}
 		var series any
 		if si != nil {
 			series = si
@@ -97,7 +109,7 @@ func (a *App) hFiles(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out = append(out, M{"path": rel, "size": st.Size(), "category": cat, "target": tgt, "series": series,
-			"copied": cp, "busy": busy[rel], "dup": dup})
+			"copied": cp, "busy": busy[rel], "dup": dup, "auto": auto})
 	}
 	ts, _ := os.Stat(a.target)
 	js(w, 200, M{"library": a.libraryEps(shows), "files": out, "categories": categories, "source": a.source, "target": a.target,

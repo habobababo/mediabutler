@@ -368,7 +368,7 @@ func (a *App) metaSearchAll(q, kind, year string) ([]M, M) {
 func (a *App) metaRoutes(get, post func(string, http.HandlerFunc)) {
 	get("/api/meta", func(w http.ResponseWriter, r *http.Request) {
 		c := a.metaConf()
-		js(w, 200, M{"tmdb_set": c.tmdb != "", "tvdb_set": c.tvdb != "", "on": c.on, "names": metaNames})
+		js(w, 200, M{"tmdb_set": c.tmdb != "", "tvdb_set": c.tvdb != "", "on": c.on, "names": metaNames, "auto": a.autoEnabled()})
 	})
 	post("/api/meta/config", func(w http.ResponseWriter, r *http.Request) {
 		b := body(r)
@@ -381,6 +381,9 @@ func (a *App) metaRoutes(get, post func(string, http.HandlerFunc)) {
 			if b["clear_"+k] == true || b["clear_"+k] == float64(1) {
 				delete(d, k)
 			}
+		}
+		if v, ok := b["auto"].(bool); ok {
+			d["auto"] = v
 		}
 		if on, ok := b["on"].(map[string]any); ok {
 			n := M{}

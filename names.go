@@ -499,6 +499,14 @@ func (s *Store) jfTarget(rel, cat string) string {
 		}
 	}
 	if title != "" {
+		mtag := ""
+		if r := s.ruleByKey(movieKey(title, year)); r != nil {
+			if r.Name != "" {
+				title = r.Name
+			}
+			year = r.Year
+			mtag = idTag(r.TMDB)
+		}
 		base := showName(title, year)
 		tg := qualityTags(stm, 0)
 		if tg == "" && year != "" && dname != "" {
@@ -507,7 +515,7 @@ func (s *Store) jfTarget(rel, cat string) string {
 		if tg != "" {
 			tg = " - " + tg
 		}
-		return cat + "/" + base + "/" + base + tg + extra + ext
+		return cat + "/" + base + mtag + "/" + base + tg + extra + ext
 	}
 	return cat + "/" + name
 }
