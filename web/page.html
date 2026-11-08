@@ -147,6 +147,7 @@ select.cat{border-color:var(--cc);color:var(--cc);font-weight:700;background:col
 #dlcfg .l,#v-dl .l{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
 input[type=range]{accent-color:var(--brand);height:36px;cursor:pointer}
 @media (pointer:coarse){input[type=range]{height:44px}input[type=range]::-webkit-slider-thumb{width:26px;height:26px}}
+.pk{display:flex;gap:8px;align-items:center;cursor:pointer}
 #v-lmatch .chip{--cc:var(--brand)}
 .amit{padding:8px 0;border-top:1px solid var(--line)}.amit .chips{margin-top:6px}
 .tag.ok{background:var(--okbg);color:var(--ok)}.tag.warn{background:var(--warnbg);color:var(--warn)}.tag.bad{background:var(--badbg);color:var(--bad)}
@@ -418,6 +419,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 
 <section id="v-dl" hidden>
   <div id="dlacc" class="card wide" hidden></div>
+  <div class="bar" id="dlgbar" hidden><button class="primary" id="dlmerge"></button><button id="dlsel0">Auswahl aufheben</button></div>
   <div id="dlpk"></div>
   <div id="dlempty" class="empty card wide" hidden><div class="big">⬇️</div><b>Keine Downloads</b>Links oben einfügen oder per Click'n'Load aus dem Browser senden.</div>
   <div class="card wide">
@@ -770,7 +772,7 @@ $("v-lmatch").onclick=async e=>{const t=e.target.closest("button");if(!t)return;
   if(t.id==="lstop"){await api("/api/libmatch/stop",{});setTimeout(loadLm,500)}};
 let lmTick=0;setInterval(()=>{lmTick++;if(view==="lmatch"||lmTick%6===0)loadLm()},1500);
 /* Downloads */
-const dlOpen=new Set(),DLI={wartet:"⏳",lädt:"⬇️",fertig:"✅",fehler:"⛔",pausiert:"⏸️"};
+const dlSel=new Set(),dlOpen=new Set(),DLI={wartet:"⏳",lädt:"⬇️",fertig:"✅",fehler:"⛔",pausiert:"⏸️"};
 let dlBusy=false;
 function fillDlCfg(c){$("dl-dir").value=$("dl-dir").matches(":focus")?$("dl-dir").value:c.dir;if(!$("dl-par").matches(":focus"))$("dl-par").value=c.parallel;
     if(!$("dl-login").matches(":focus"))$("dl-login").value=c.dd_login||"";
@@ -784,6 +786,7 @@ async function loadAcc(force){try{const r=await api("/api/dl/accounts"+(force?"?
 const spd=n=>n>0?fmt(n)+"/s":"";
 async function loadDl(cfg){try{const r=await api("/api/dl");
   setBadge("ndl",r.active);
+  const gb=$("dlgbar");gb.hidden=!dlSel.size;$("dlmerge").textContent=`📦 ${dlSel.size} Paket(e) zusammenfassen`;
   const c=r.conf;if((cfg||!dlBusy)&&(view==="dl"||view==="set"))fillDlCfg(c);
   if(view!=="dl")return;
   if(Date.now()-accT>60000)loadAcc();
@@ -791,13 +794,19 @@ async function loadDl(cfg){try{const r=await api("/api/dl");
   const tot=pk.reduce((a,p)=>a+p.speed,0);$("dlsum").textContent=pk.length?`${pk.length} Paket(e)${tot?" · "+spd(tot):""}`:"";
   $("dlpk").innerHTML=pk.map(p=>{const pct=p.size?Math.min(100,Math.round(p.done*100/p.size)):(p.status==="fertig"?100:0),open=dlOpen.has(p.name);
     const cl=p.status==="fertig"?"ok":p.status==="fehler"?"bad":p.status==="pausiert"?"warn":"";
-    return `<div class="card wide dlp" data-p="${esc(p.name)}"><div class="exh"><b>📦 ${esc(p.name)}</b><span class="tag ${cl}">${DLI[p.status]||""} ${p.status}</span></div>
+    return `<div class="card wide dlp" data-p="${esc(p.name)}"><div class="exh"><label class="pk"><input type="checkbox" data-sel="${esc(p.name)}" ${dlSel.has(p.name)?"checked":""}> <b>📦 ${esc(p.name)}</b></label><span class="tag ${cl}">${DLI[p.status]||""} ${p.status}</span></div>
      <div class="prog thin ${p.status==="lädt"?"run":""}"><i style="width:${pct}%"></i></div>
      <div class="sub">${p.finished}/${p.total} Teile · ${fmt(p.done)}${p.size?" von "+fmt(p.size):""}${p.speed?" · "+spd(p.speed):""}</div>
-     <div class="bar" style="margin:8px 0 0"><button data-act="resume" data-pkg="${esc(p.name)}">▶️ Starten</button><button data-act="pause" data-pkg="${esc(p.name)}">⏸️ Pause</button><button data-act="retry" data-pkg="${esc(p.name)}">↻ Neu versuchen</button><button class="danger" data-act="remove" data-pkg="${esc(p.name)}">🗑️ Entfernen</button><button data-tgp="${esc(p.name)}">${open?"▾ Teile verbergen":"▸ Teile zeigen"}</button></div>
-     ${open?`<div class="table" style="margin-top:8px"><table><tbody>${p.items.map(i=>`<tr><td class="f">${esc(i.name||i.url)}${i.err?`<div class="sub" style="color:var(--bad,#e58)">${esc(i.err)}</div>`:""}</td><td>${DLI[i.status]||""} ${i.status}</td><td class="s">${i.size?fmt(i.done)+" / "+fmt(i.size):""} ${spd(i.speed)}</td><td><button data-act="${i.status==="lädt"?"pause":"retry"}" data-id="${i.id}">${i.status==="lädt"?"⏸️":"↻"}</button><button data-act="remove" data-id="${i.id}">🗑️</button></td></tr>`).join("")}</tbody></table></div>`:""}</div>`}).join("");
+     <div class="bar" style="margin:8px 0 0"><button data-act="resume" data-pkg="${esc(p.name)}">▶️ Starten</button><button data-act="pause" data-pkg="${esc(p.name)}">⏸️ Pause</button><button data-act="retry" data-pkg="${esc(p.name)}">↻ Neu versuchen</button><button class="danger" data-act="remove" data-pkg="${esc(p.name)}">🗑️ Entfernen</button><button data-ren="${esc(p.name)}">✏️ Umbenennen</button><button data-tgp="${esc(p.name)}">${open?"▾ Teile verbergen":"▸ Teile zeigen"}</button></div>
+     ${open?`<div class="table" style="margin-top:8px"><table><tbody>${p.items.map(i=>`<tr><td class="f">${esc(i.name||i.url)}${i.err?`<div class="sub" style="color:var(--bad,#e58)">${esc(i.err)}</div>`:""}</td><td>${DLI[i.status]||""} ${i.status}</td><td class="s">${i.size?fmt(i.done)+" / "+fmt(i.size):""} ${spd(i.speed)}</td><td><button data-act="${i.status==="lädt"?"pause":"retry"}" data-id="${i.id}">${i.status==="lädt"?"⏸️":"↻"}</button><button data-mv="${i.id}" title="In anderes Paket verschieben">📦</button><button data-act="remove" data-id="${i.id}">🗑️</button></td></tr>`).join("")}</tbody></table></div>`:""}</div>`}).join("");
  }catch{}}
+async function dlGroup(body,msg){try{await api("/api/dl/group",body);toast(msg,"ok")}catch(e){toast(e.message,"bad")}dlSel.clear();loadDl()}
+$("dlpk").onchange=e=>{const c=e.target.dataset.sel;if(c===undefined)return;e.target.checked?dlSel.add(c):dlSel.delete(c);$("dlgbar").hidden=!dlSel.size;$("dlmerge").textContent=`📦 ${dlSel.size} Paket(e) zusammenfassen`};
+$("dlmerge").onclick=()=>{const l=[...dlSel];const n=prompt("Name des gemeinsamen Pakets:",l[0]);if(n)dlGroup({pkgs:l,target:n},"Zusammengefasst")};
+$("dlsel0").onclick=()=>{dlSel.clear();loadDl()};
 $("dlpk").onclick=async e=>{const t=e.target.closest("button");if(!t)return;
+  if(t.dataset.ren){const n=prompt("Neuer Paketname (existiert er schon, werden die Pakete zusammengeführt):",t.dataset.ren);if(n&&n!==t.dataset.ren)dlGroup({pkgs:[t.dataset.ren],target:n},"Umbenannt");return}
+  if(t.dataset.mv){const names=[...document.querySelectorAll("#dlpk [data-p]")].map(x=>x.dataset.p).join(", ");const n=prompt("In welches Paket verschieben? (neuer oder bestehender Name)\nVorhanden: "+names,"");if(n)dlGroup({ids:[+t.dataset.mv],target:n},"Verschoben");return}
   if(t.dataset.tgp){dlOpen.has(t.dataset.tgp)?dlOpen.delete(t.dataset.tgp):dlOpen.add(t.dataset.tgp);return loadDl()}
   if(!t.dataset.act)return;
   if(t.dataset.act==="remove"&&!confirm("Aus der Liste entfernen? Bereits geladene Dateien bleiben erhalten."))return;
@@ -1590,7 +1599,7 @@ $("updback").onclick=async()=>{
   if(!confirm("Vorherige Version von app.py wiederherstellen und neu starten?"))return;
   try{await api("/api/update/rollback",{});await afterRestart("Vorherige Version wiederhergestellt. Starte neu …")}catch(e){toast(e.message,"bad")}};
 
-const HV={lmatch:"lmatch",clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",dup:"dup",ana:"ana",sched:"sched",set:"set"};
+const HV={dl:"dl",lmatch:"lmatch",clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",dup:"dup",ana:"ana",sched:"sched",set:"set"};
 function route(){const h=location.hash.slice(1);if(h==="clarify")filter="Klärung";show(HV[h]||"sort")}
 window.addEventListener("hashchange",route);
 const dockEl=document.querySelector(".dock");

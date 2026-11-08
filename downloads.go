@@ -954,6 +954,61 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 		d.poke()
 		js(w, 200, M{"ok": true})
 	})
+	post("/api/dl/group", func(w http.ResponseWriter, r *http.Request) {
+		b := body(r)
+		target := cleanFn(str(b["target"]))
+		if target == "" {
+			js(w, 400, M{"error": "Bitte einen Paketnamen angeben."})
+			return
+		}
+		pk := map[string]bool{}
+		for _, p := range strs(b["pkgs"], 500) {
+			pk[p] = true
+		}
+		ids := map[int]bool{}
+		if l, ok := b["ids"].([]any); ok {
+			for _, x := range l {
+				if n, ok := toInt(x); ok {
+					ids[n] = true
+				}
+			}
+		}
+		conf := d.conf()
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		var sel []*DLItem
+		for _, it := range d.f.Items {
+			if (pk[it.Pkg] || ids[it.ID]) && it.Pkg != target {
+				if it.Status == "lädt" {
+					js(w, 400, M{"error": "Laufende Downloads bitte erst pausieren."})
+					return
+				}
+				sel = append(sel, it)
+			}
+		}
+		moved := 0
+		for _, it := range sel {
+			oldDir := filepath.Join(conf.Dir, cleanFn(it.Pkg))
+			newDir := filepath.Join(conf.Dir, target)
+			if it.Name != "" {
+				os.MkdirAll(newDir, 0o755)
+				for _, fn := range []string{it.Name, it.Name + ".mbdl"} {
+					src, dst := filepath.Join(oldDir, fn), filepath.Join(newDir, fn)
+					if _, err := os.Stat(src); err == nil {
+						if _, err := os.Stat(dst); err != nil {
+							os.Rename(src, dst)
+						}
+					}
+				}
+				os.Remove(oldDir) // nur wenn leer
+			}
+			it.Pkg = target
+			moved++
+		}
+		delete(d.pkgDone, target)
+		d.saveLocked()
+		js(w, 200, M{"ok": true, "moved": moved})
+	})
 	post("/api/dl/config", func(w http.ResponseWriter, r *http.Request) {
 		b := body(r)
 		c := d.conf()
