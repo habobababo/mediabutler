@@ -1,0 +1,1405 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#202734">
+<link rel="icon" href="/icon-64.png" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest">
+<title>MediaButler</title>
+<style>
+:root{
+ --bg:#202734;--surface:#2a3347;--ink:#e0f8c7;--muted:#a9b8ae;--line:#3f4b66;--soft:#36415a;
+ --brand:#b7d894;--brand2:#b7d894;--brand-ink:#202734;--hero:#36415a;
+ --ok:#b7d894;--okbg:#2e4234;--warn:#f0c46a;--warnbg:#463c20;--bad:#ff8c9d;--badbg:#4a2a37;
+ --c-Filme:#f0a45c;--c-Serien:#8fb8ff;--c-Anime:#f58aa8;--c-Dokus:#6fd6b8;--c-:#f0c46a;
+ --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25);color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;padding-top:env(safe-area-inset-top,0px);background:var(--bg);color:var(--ink);
+ font:15px/1.5 ui-rounded,"SF Pro Rounded","Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:16px 16px 24px}
+h1{font-size:24px;line-height:1.15;margin:0}h2{font-size:17px;margin:0 0 4px}
+p{margin:0}.sub{color:var(--muted)}
+code,.path,input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+[hidden]{display:none!important}
+
+/* Kopfbereich */
+.hero{position:relative;display:grid;grid-template-columns:1fr auto;gap:14px 28px;align-items:center;background:var(--hero);color:#e0f8c7;
+ border-radius:22px;padding:22px 24px 20px;margin-bottom:16px;box-shadow:var(--shadow)}
+.hero .brand{grid-column:1;display:flex;gap:14px;align-items:center;min-width:0}
+.hero .logo{width:64px;height:64px;border-radius:16px;flex:none;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+.hero h1{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0;color:#e0f8c7}
+.hero .claim{color:rgba(255,255,255,.8);font-size:14px;margin-top:3px}
+.hero .flow{grid-column:1;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hero .arrow{color:rgba(255,255,255,.6)}
+.pathchip{background:rgba(32,39,52,.45);color:#e0f8c7;border-radius:10px;padding:5px 10px;min-width:0;max-width:100%}
+.pathchip code{word-break:break-all;color:#e0f8c7}
+.ver{position:absolute;top:10px;right:16px;font-size:11.5px;color:rgba(255,255,255,.65);font-variant-numeric:tabular-nums}
+.stats{grid-column:2;grid-row:1 / span 3;display:flex;gap:10px}
+.hero .disk{grid-column:1;max-width:520px;font-size:13.5px}
+.disk .drow span,.disk .drow b{white-space:nowrap}.disk .drow{display:flex;justify-content:space-between;gap:12px;margin-bottom:5px;opacity:.9}.disk .drow b{font-weight:600}
+.disk .dbar{height:10px;border-radius:5px;background:rgba(224,248,199,.16);overflow:hidden}
+.disk .dbar i{display:block;height:100%;width:0;border-radius:5px;background:var(--ok);transition:width .4s}
+.disk.warn .dbar i{background:var(--warn)}.disk.bad .dbar i{background:var(--bad)}
+.stat{background:rgba(32,39,52,.45);border-radius:14px;padding:9px 14px;min-width:96px;display:flex;flex-direction:column-reverse}
+.stat b{display:block;font-size:24px;line-height:1.1;font-weight:800}.stat span{font-size:12px;color:rgba(255,255,255,.8);white-space:nowrap}
+.stat.alert{background:#b7d894}.stat.alert b,.stat.alert span{color:#202734}
+
+/* Hinweise */
+.banner{border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:flex-start;font-size:14px}
+.banner.bad{background:var(--badbg);color:var(--bad)}.banner.warn{background:var(--warnbg);color:var(--warn)}.banner.ok{background:var(--okbg);color:var(--ok)}
+
+/* Bedienelemente */
+.exitem{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;max-width:760px}
+.exitem .exh{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px}.exitem .bar{margin:8px 0 0}
+.exitem .prog{margin-top:8px}.exitem input{flex:1 1 180px;min-width:0}
+.exrow{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:14px}.exrow:first-child{border-top:0}
+.tbox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px 4px;margin-bottom:12px}
+.tbox h3{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.tbox .bar{margin-bottom:8px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+button,select,input[type=text],input[type=search],input[type=password],input[type=url]{
+ font:inherit;border:1.5px solid var(--line);background:var(--surface);color:var(--ink);padding:8px 14px;border-radius:12px;min-height:40px}
+button{cursor:pointer;font-weight:600;transition:transform .08s,background .15s,border-color .15s}
+button:hover:not(:disabled){border-color:var(--brand);background:var(--soft)}
+button:active:not(:disabled){transform:scale(.97)}
+button.primary{background:var(--brand);color:var(--brand-ink);border-color:transparent}
+button.primary:hover:not(:disabled){background:color-mix(in srgb,var(--brand) 86%,#000);border-color:transparent}
+button.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+button.danger:hover:not(:disabled){background:var(--badbg);border-color:var(--bad)}
+button.ghost{border-color:transparent;background:none}
+button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+button.link{border:0;background:none;padding:0;min-height:0;color:var(--brand);text-decoration:underline;font-weight:600}
+:focus-visible{outline:3px solid color-mix(in srgb,var(--brand) 55%,transparent);outline-offset:2px}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--brand)}
+
+/* Reiter */
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding:6px 0;margin-bottom:8px;display:flex;justify-content:flex-end}
+.nav{display:flex;gap:6px;max-width:100%}
+.nav button{position:relative;border-radius:999px;background:var(--surface);white-space:nowrap;display:flex;gap:6px;align-items:center;justify-content:center;padding:0;width:42px;height:42px;min-height:42px;font-size:19px;line-height:1}
+.nav button .lbl{display:none;font-size:14px;font-weight:600}
+.nav button.on{width:auto;padding:0 14px;background:var(--brand);color:var(--brand-ink);border-color:transparent;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+@media (min-width:700px){.nav button.on .lbl{display:inline}}
+.nav .badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;line-height:18px;font-size:11px;padding:0 5px;box-shadow:0 0 0 2px var(--bg)}
+.badge{min-width:20px;height:20px;border-radius:10px;padding:0 6px;font-size:12px;line-height:20px;text-align:center;background:var(--soft);color:var(--muted)}
+.badge.hot{background:var(--warn);color:#202734}
+
+/* Filter-Chips */
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border-radius:999px;padding:5px 12px;min-height:34px;font-size:14px;display:inline-flex;gap:6px;align-items:center}
+.chip[data-c]{--cc:var(--c-)}
+.chip[data-c=Filme]{--cc:var(--c-Filme)}.chip[data-c=Serien]{--cc:var(--c-Serien)}.chip[data-c=Anime]{--cc:var(--c-Anime)}.chip[data-c=Dokus]{--cc:var(--c-Dokus)}
+.chip[data-c=Alle]{--cc:var(--brand)}
+.chip.on{background:var(--cc);border-color:var(--cc);color:#202734}
+.chip.on:hover:not(:disabled){background:var(--cc);border-color:var(--cc)}
+.chip i{font-style:normal;font-size:12px;opacity:.85}
+
+/* Tabellen */
+.table{background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-weight:600;color:var(--muted);font-size:13px;background:var(--soft)}tr:last-child td{border-bottom:0}
+tbody tr{--cc:var(--c-)}
+tbody tr[data-cat=Filme]{--cc:var(--c-Filme)}tbody tr[data-cat=Serien]{--cc:var(--c-Serien)}
+tbody tr[data-cat=Anime]{--cc:var(--c-Anime)}tbody tr[data-cat=Dokus]{--cc:var(--c-Dokus)}
+#rows td:first-child{box-shadow:inset 4px 0 0 var(--cc)}
+td.f,.path{word-break:break-all}.t{color:var(--muted);font-size:13px;word-break:break-all}
+td.s{white-space:nowrap;color:var(--muted)}
+.path{user-select:all}
+select.cat{border-color:var(--cc);color:var(--cc);font-weight:700;background:color-mix(in srgb,var(--cc) 9%,var(--surface))}
+.tag{display:inline-flex;gap:4px;align-items:center;padding:2px 10px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--soft);color:var(--muted)}
+.tag.cat{color:var(--cc);background:color-mix(in srgb,var(--cc) 14%,var(--surface))}
+.tag.ok{background:var(--okbg);color:var(--ok)}.tag.warn{background:var(--warnbg);color:var(--warn)}.tag.bad{background:var(--badbg);color:var(--bad)}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+.empty .big{font-size:42px;line-height:1.2}.empty b{display:block;color:var(--ink);font-size:17px;margin:4px 0}
+
+/* Karten / Einstellungen */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px;max-width:760px;box-shadow:var(--shadow)}
+.card header{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+.card header .ico{font-size:24px;background:var(--soft);border-radius:12px;padding:6px 9px}
+.opt{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line);cursor:pointer}
+.opt:first-of-type{border-top:0}
+.opt b{display:block;font-weight:600}.opt small{color:var(--muted);font-size:13px}
+.opt input[type=checkbox]{appearance:none;flex:none;width:44px;height:26px;border-radius:13px;background:var(--line);position:relative;cursor:pointer;transition:background .2s;margin-top:1px}
+.opt input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s}
+.opt input[type=checkbox]:checked{background:var(--ok)}.opt input[type=checkbox]:checked::after{left:21px}
+.field{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.field input{flex:1 1 200px;min-width:0}.field input.tok{flex-basis:320px}
+label.l{display:block;font-weight:600;font-size:14px;margin-top:10px}
+.next{margin:6px 0 0;padding-left:18px;color:var(--muted)}
+details{margin-top:10px;color:var(--muted);font-size:14px}summary{cursor:pointer;color:var(--brand);font-weight:600}
+details ol{padding-left:20px;margin:6px 0}
+.err{color:var(--bad);font-size:13.5px;margin-top:6px;white-space:pre-line}
+
+/* Fortschritts-Leiste unten */
+.dock{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -4px 16px rgba(20,24,40,.06);
+ padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));z-index:10}
+.dock>div{max-width:1100px;margin:0 auto}
+.sched{display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13.5px;margin-bottom:8px}
+.sched .pill{display:inline-flex;gap:6px;align-items:center;background:var(--soft);border-radius:999px;padding:3px 12px}
+.sched .pill.on{background:var(--okbg);color:var(--ok)}
+.row{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:var(--muted);margin-bottom:4px}
+.row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row b{color:var(--ink)}
+.prog{height:14px;background:var(--soft);border-radius:7px;overflow:hidden;margin-bottom:8px}
+.prog i{display:block;height:100%;width:0;border-radius:7px;background:var(--brand);transition:width .3s}
+.prog.thin{height:7px}
+.prog.run i{background-image:linear-gradient(45deg,rgba(255,255,255,.22) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.22) 50%,rgba(255,255,255,.22) 75%,transparent 75%);background-size:28px 28px;animation:flow 1s linear infinite}
+@keyframes flow{to{background-position:28px 0}}
+.dock .bar{margin:0}
+
+/* Meldungen */
+#toasts{position:fixed;left:0;right:0;top:calc(12px + env(safe-area-inset-top,0px));display:flex;flex-direction:column;align-items:center;gap:8px;z-index:50;pointer-events:none;padding:0 12px}
+.toast{background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:520px;font-weight:600;animation:pop .2s}
+.toast.ok{background:var(--ok);color:#202734}.toast.bad{background:var(--bad);color:#202734}
+@keyframes pop{from{transform:translateY(-8px);opacity:0}}
+
+@media (pointer:coarse){
+ button,select,input[type=text],input[type=search],input[type=password],input[type=url]{min-height:46px;font-size:16px}
+ input[type=checkbox]:not(.sw){width:22px;height:22px}}
+@media (pointer:coarse){button.chip{min-height:38px;font-size:14px;padding:4px 12px}}
+@media (max-width:720px){
+ .hero{grid-template-columns:1fr;padding:18px 16px 16px;gap:12px;border-radius:20px}.hero .stats{grid-column:1;grid-row:auto;width:100%}
+ .hero .logo{width:52px;height:52px;border-radius:14px}.hero h1{font-size:23px}.hero .claim{font-size:13px}
+ .stat{flex:1;min-width:0;padding:7px 10px}.stat span{white-space:normal}
+ .stat span{font-size:12px;line-height:1.25}
+ .bar.tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}.bar.tools button{padding:6px 8px;white-space:nowrap}
+ #presets{flex-wrap:wrap!important;overflow:visible!important}
+ .bar.tools #sel{grid-column:1/-1}
+ .sched{white-space:nowrap;margin-bottom:6px}.sched>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+ main{padding:10px 12px 24px}
+ .stat b{font-size:20px}
+ .chips{flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:4px}.chip{white-space:nowrap}
+ .table{background:none;border:0;box-shadow:none;overflow:visible}
+ table{display:block}tbody{display:block}thead{display:none}
+ tr{display:grid;grid-template-columns:1fr auto;gap:6px 12px;position:relative;background:var(--surface);border:1px solid var(--line);
+  border-left:5px solid var(--cc,var(--line));border-radius:14px;padding:12px;margin-bottom:10px;box-shadow:var(--shadow)}
+ td{display:block;border:0;padding:0;min-width:0}
+ td.span{grid-column:1/-1}
+ #rows td:first-child{box-shadow:none}
+ #rows td.chk{position:absolute;top:12px;right:12px}
+ #rows td.f{order:1;grid-column:1/-1;padding-right:34px;font-weight:600}
+ #rows td.c{order:2}#rows td.s{order:3;text-align:right;align-self:center}
+ #rows td.t{order:4;grid-column:1/-1}#rows select{width:100%}
+ #rows.grouped tr:not(.grow) td.f{padding-left:0}tr.grow td.s{display:none}tr.grow{background:var(--soft)}
+ .empty{background:var(--surface);border-radius:16px}
+ .card{max-width:none;padding:14px}
+ .dock{padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px))}
+ .hide-m{display:none}.prog{height:11px;margin-bottom:6px}.prog.thin{height:6px}
+ .dock .bar button.primary{flex:1}
+ .nav{gap:4px}.nav button{width:38px;height:38px;min-height:38px;font-size:18px}.nav button.on{width:38px;padding:0}}
+.wide{max-width:none}
+button.toggle.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+dialog{border:1px solid var(--line);border-radius:16px;padding:20px;background:var(--surface);color:var(--text,inherit);width:min(460px,calc(100vw - 32px));box-shadow:0 20px 60px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog input,dialog select{width:100%;box-sizing:border-box}
+dialog .field{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#sprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
+#sprev div{padding:3px 0;border-top:1px solid var(--line)}#sprev div:first-child{border-top:0}#sprev small{display:block;opacity:.65}
+tr.grow.sg,tr.grow.fg{cursor:pointer}tr.grow .cv{min-height:30px;min-width:30px;padding:0;margin-right:6px}
+tr.grow.hasgap{--cc:var(--warn)}tr.solo.hasgap{--cc:var(--warn)}tr.solo .rn{margin-left:8px;min-height:30px;padding:2px 10px;font-size:13px;font-weight:400}
+tr.grow.sg.hasgap td,tr.grow.fg.hasgap td,tr.solo.hasgap td{background:color-mix(in srgb,var(--warn) 14%,var(--surface))}tr.hasgap .gap{font-weight:700;font-size:15px}
+#mrows{max-height:50vh;overflow:auto}.mrow{display:grid;grid-template-columns:1fr 90px 120px;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
+.mrow:first-child{border-top:0}.mrow.head{font-size:13px;color:var(--muted);border-top:0;padding-top:0}.mrow .bad{outline:2px solid var(--warn)}
+@media (max-width:520px){.mrow{grid-template-columns:1fr 1fr}.mrow>:first-child{grid-column:1/-1}}
+#fprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
+#fprev div{padding:3px 0;border-top:1px solid var(--line)}#fprev div:first-child{border-top:0}#fprev small{display:block;opacity:.65}
+.gap{font-size:13px;margin-top:4px;color:var(--warn)}.gap.ok{color:var(--ok)}.gap.ghost{color:inherit;opacity:.7}
+.fq input{flex:1 1 260px;min-width:0}
+#gprev{font-size:12px;line-height:1.45;word-break:break-all;max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px}
+#gprev div{padding:3px 0;border-top:1px solid var(--line)}#gprev div:first-child{border-top:0}#gprev small{display:block;opacity:.65}
+#gdlg select,#gdlg input{width:100%}#gdlg .field{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ctx{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px}
+.gpath{margin-top:6px;font-size:12.5px;color:var(--muted);word-break:break-all;line-height:1.35}
+.ctx button.danger{border:0;background:none}.ctx button.danger:hover:not(:disabled){background:var(--badbg)}
+.ctx button{display:block;width:100%;border:0;background:none;text-align:left;padding:8px 14px}
+td.f::before{content:"🎞️ ";opacity:.75}tr.grow td.f::before{content:""}
+.badge.live{background:var(--ok);color:#202734;animation:pulse 1.4s ease-in-out infinite}.nav .on .badge.live{background:var(--ok);color:#202734}
+@keyframes pulse{50%{opacity:.55}}
+.rtiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}
+.rtile{background:var(--soft);border-radius:12px;padding:8px 12px}.rtile small{display:block;font-size:12px;color:var(--muted)}.rtile b{font-size:17px}
+.bigpct{font-size:40px;font-weight:800;line-height:1}
+.runhead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:10px}
+.curfile{background:var(--soft);border-radius:12px;padding:10px 12px;margin-bottom:12px}.curfile code{word-break:break-all}
+.qrow td{padding:7px 10px;border-top:1px solid var(--line)}.qs{white-space:nowrap;width:130px}
+.qrow.kopiert td{background:color-mix(in srgb,var(--brand) 8%,var(--surface))}.qrow.fehler td,.qrow.abgebrochen td{background:var(--badbg)}
+.rcard{max-width:none}
+@media (max-width:720px){.rtiles{grid-template-columns:1fr 1fr}.bigpct{font-size:32px}.qs{width:auto}}
+tr.grow.sg td{background:var(--soft)}tr.grow .rn{margin-left:8px;min-height:30px;padding:2px 10px;font-size:13px}
+.series .chips{width:100%}.series .chip b{font-weight:700}.series .chip small{opacity:.7}
+.rule{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)}
+.rule:first-child{border-top:0}.rule .sub{display:block}
+.bulk{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center;background:var(--soft);border-radius:12px;padding:8px 12px;margin-bottom:12px}
+tr.grow{--cc:var(--brand)}tr.grow td{background:var(--soft)}tr.grow td.f{font-weight:400}tr.grow select{width:100%}
+#rows.grouped tr:not(.grow) td.f{padding-left:12px}
+#rows tr.grow td{border-top:12px solid var(--surface)}#rows tr.grow:first-child td{border-top:0}
+@media (min-width:721px){#rows.grouped tr:not(.grow):not(.solo) td.chk{padding-left:36px}}
+@media (max-width:720px){#rows.grouped tr:not(.grow) td.f{padding-left:0}#rows tr.grow td{border-top:0}#rows.grouped tr:not(.grow):not(.solo){margin-left:18px}}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:4px 12px;padding:9px 0;border-top:1px solid var(--line)}.kv:first-child{border-top:0}
+@media (max-width:720px){.kv{grid-template-columns:1fr}}
+.grp{font-weight:700;margin:16px 0 2px}.grp small{font-weight:400;color:var(--muted);margin-left:6px}
+.astats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;box-shadow:var(--shadow)}
+.tile b{display:block;font-size:26px;line-height:1.2}
+.tile.save{background:var(--okbg);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 30%,var(--line))}
+.sbar{display:flex;height:24px;border-radius:12px;overflow:hidden;background:var(--soft)}.sbar i{display:block;height:100%}
+.crow{display:grid;grid-template-columns:1fr 1fr 1.3fr 1fr;gap:8px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.crow .tag{justify-self:start}.crow:first-child{border-top:0}.crow b{text-align:right}.okc{color:var(--ok)}
+input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;background:none}
+@media (max-width:720px){
+ .astats{grid-template-columns:1fr 1fr}.tile.save{grid-column:1/-1}
+ .crow{grid-template-columns:auto 1fr auto;gap:6px 10px}.crow span:nth-child(2){display:none}.crow small{display:none}}
+.dupl{margin-top:6px;display:flex;flex-direction:column;gap:3px;align-items:flex-start;font-size:13px}
+.dupm{line-height:1.35;word-break:break-all}.dupm code{font-size:12.5px}
+.dg{padding:14px 16px;max-width:none}.dgh{display:flex;justify-content:space-between;gap:6px 14px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+.dgf{display:flex;gap:12px;align-items:flex-start;padding:10px 8px;border-top:1px solid var(--line);cursor:pointer;border-radius:10px}
+.dgf.sel{background:color-mix(in srgb,var(--bad) 14%,var(--surface))}
+.dgf input{margin-top:3px;flex:none}.dgi{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dgn{font-weight:600;word-break:break-word}.dgp{color:var(--muted);word-break:break-all;font-size:12.5px;background:none;padding:0}
+.dgm{font-size:13px;color:var(--muted)}#dk-dup .row{margin-bottom:8px}
+.mpick{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 0}.mres{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:260px;overflow:auto}
+.mhit{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;padding:9px 12px;border-radius:12px;width:100%}.mhit .sub{font-size:12.5px;line-height:1.35}
+.mon{display:flex;gap:10px;align-items:center;margin:6px 0}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body><main>
+
+<div class="topbar"><nav class="nav" id="nav" aria-label="Bereiche">
+  <button data-v="sort" title="Sortieren" aria-label="Sortieren"><span class="ic">📥</span><span class="lbl">Sortieren</span><span class="badge hot" id="ns" hidden></span></button>
+  <button data-v="run" title="Läuft" aria-label="Läuft"><span class="ic">⚡</span><span class="lbl">Läuft</span><span class="badge live" id="nr" hidden></span></button>
+  <button data-v="ext" title="Entpacken" aria-label="Entpacken"><span class="ic">📦</span><span class="lbl">Entpacken</span><span class="badge" id="ne" hidden></span></button>
+  <button data-v="hist" title="Verschoben" aria-label="Verschoben"><span class="ic">✅</span><span class="lbl">Verschoben</span><span class="badge" id="nh" hidden></span></button>
+  <button data-v="clean" title="Aufräumen" aria-label="Aufräumen"><span class="ic">🧹</span><span class="lbl">Aufräumen</span><span class="badge" id="nc" hidden></span></button>
+  <button data-v="dup" title="Duplikate" aria-label="Duplikate"><span class="ic">🔁</span><span class="lbl">Duplikate</span><span class="badge" id="nd" hidden></span></button>
+  <button data-v="ana" title="Analyse" aria-label="Analyse"><span class="ic">📊</span><span class="lbl">Analyse</span></button>
+  <button data-v="sched" title="Zeitplan" aria-label="Zeitplan"><span class="ic">⏰</span><span class="lbl">Zeitplan</span></button>
+  <button data-v="set" title="Einstellungen" aria-label="Einstellungen"><span class="ic">⚙️</span><span class="lbl">Einstellungen</span></button>
+</nav></div>
+
+<header class="hero">
+  <span class="ver" title="Version und Prüfsumme der laufenden app.py">{{VERSION}}</span>
+  <div class="brand"><img class="logo" src="/icon-192.png" alt="" width="64" height="64">
+    <div><h1>MediaButler</h1><div class="claim">Sortiert, entpackt und serviert deine Medien.</div></div></div>
+  <div class="flow"><span class="pathchip" title="Quellordner">📥 <code id="src">…</code></span><span class="arrow" aria-hidden="true">➜</span><span class="pathchip" title="Ziel auf dem NFS-Share">🗄️ <code id="tgt">…</code></span></div>
+  <div class="disk" id="disk" hidden title="Belegung des Ziel-Speichers">
+    <div class="drow"><span>💾 Speicher</span><b id="disk-txt"></b></div>
+    <div class="dbar"><i id="disk-bar"></i></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><span>📦 bereit</span><b id="st-ready">0</b></div>
+    <div class="stat" id="st-clar-box"><span>❓ brauchen dich</span><b id="st-clar">0</b></div>
+    <div class="stat"><span>✅ verschoben</span><b id="st-hist">0</b></div>
+  </div>
+</header>
+<div id="warn"></div>
+<div id="warn2"></div>
+
+
+<section id="v-sort">
+  <div id="exbar" class="banner warn" hidden>📦 <span><span id="extxt"></span> <button class="link" id="exgo">Zum Reiter Entpacken</button></span></div>
+  <div class="bar">
+    <div class="chips" id="tabs"></div>
+  </div>
+  <div class="bar fq"><input type="search" id="fq" placeholder="🔍 Suchen: Dateiname, Serie oder Pfad" autocomplete="off" aria-label="Dateien suchen"><button id="fmark" hidden>☑️ Treffer markieren</button><span id="fqn" class="sub"></span><button id="reload" title="Dateiliste neu einlesen">↻ Neu laden</button></div>
+  <section class="tbox" aria-labelledby="tboxh"><h3 id="tboxh">☑️ Markierungen &amp; Ansicht</h3>
+  <div class="bar tools">
+    <button id="all">☑️ Alle auswählen</button><button id="none">⬜ Keine</button><button id="inv" title="Auswahl der sichtbaren Dateien umdrehen">🔁 Umkehren</button>
+    <button id="grp" class="toggle">📁 Nach Ordner</button><button id="sgrp" class="toggle">📺 Nach Serie</button><button id="merge" hidden>🔗 Serien vereinen</button><button id="shc" class="toggle" hidden>✅ Schon kopierte zeigen (<span id="shcn">0</span>)</button>
+    <span id="sel" class="sub"></span><span class="sub hide-m" style="margin-left:auto">💡 Shift+Klick markiert einen Bereich, Strg+A alles</span>
+  </div></section>
+  <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
+  <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="gbtn">👥 Neue Gruppe</button><button id="dbtn" class="danger">🗑️ Löschen</button><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
+  <div class="table"><table>
+    <thead><tr><th style="width:40px"><input type="checkbox" id="master" aria-label="Alle"></th><th>🎞️ Datei</th><th style="width:170px">🏷️ Kategorie</th><th>📍 Wird abgelegt als</th><th>💾 Größe</th></tr></thead>
+    <tbody id="rows"></tbody></table>
+    <div id="empty" class="empty" hidden><div class="big">🎉</div><b>Alles sortiert</b>Im Quellordner liegt nichts mehr, was sortiert werden muss.</div></div>
+</section>
+
+<div id="ctx" class="ctx" hidden><button id="ctxgrp">👥 Neue Gruppe</button><button id="ctxdis">↩️ Gruppe auflösen</button><button id="ctxedit">✏️ Ziel bearbeiten</button><button id="ctxdel" class="danger">🗑️ Löschen</button></div>
+<dialog id="gdlg"><form method="dialog" id="gform">
+  <h2 style="margin:0 0 4px">👥 Neue Gruppe</h2>
+  <p class="sub" id="gdet" style="margin:0 0 12px"></p>
+  <label class="l" for="gname">Name der Serie</label>
+  <input type="text" id="gname" autocomplete="off" required>
+  <div class="mpick"><button type="button" data-mp="g">🔎 Online suchen</button><span class="sub" id="gmsg"></span></div><div class="mres" id="gres"></div>
+  <div class="field"><div><label class="l" for="gyear">Jahr (optional)</label><input type="text" id="gyear" inputmode="numeric" maxlength="4" placeholder="1996"></div>
+  <div><label class="l" for="gtmdb">ID (optional)</label><input type="text" id="gtmdb" placeholder="12609 oder tvdb:81189" title="TMDB-ID oder tvdb:ID"></div></div>
+  <div class="field"><div><label class="l" for="gcat">Kategorie</label><select id="gcat"></select></div>
+  <div><label class="l" for="gseason">Staffel</label><input type="number" id="gseason" min="0" max="99" value="1"></div></div>
+  <label class="l" for="gmode">Folgennummern</label>
+  <div class="field"><select id="gmode"><option value="keep">Erkannte behalten, fehlende ergänzen</option><option value="renumber">Alle der Reihe nach neu zählen</option></select>
+  <div><input type="number" id="gstart" min="0" value="1" aria-label="Startnummer" title="Startnummer"></div></div>
+  <p class="sub" id="gcount" style="margin:12px 0 4px"></p>
+  <div id="gprev" class="mono"></div>
+  <p class="sub" style="margin-top:10px">Wird für genau diese Dateien gemerkt und gilt auch für den Zeitplan. Die Reihenfolge ergibt sich aus dem Dateinamen.</p>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="gcancel">Abbrechen</button><button class="primary" type="submit">Gruppe anlegen</button></div>
+</form></dialog>
+<dialog id="sdlg"><form method="dialog" id="sform">
+  <h2 style="margin:0 0 4px">Serie umbenennen</h2>
+  <p class="sub" id="sdet" style="margin:0 0 12px"></p>
+  <label class="l" for="sname">Name der Serie</label>
+  <input type="text" id="sname" autocomplete="off" required>
+  <div class="mpick"><button type="button" data-mp="s">🔎 Online suchen</button><span class="sub" id="smsg"></span></div><div class="mres" id="sres"></div>
+  <div class="field"><div><label class="l" for="syear">Jahr (optional)</label><input type="text" id="syear" inputmode="numeric" maxlength="4" placeholder="1996"></div>
+  <div><label class="l" for="stmdb">ID (optional)</label><input type="text" id="stmdb" placeholder="12609 oder tvdb:81189" title="TMDB-ID oder tvdb:ID"></div></div>
+  <label class="l" for="scat">Kategorie</label>
+  <select id="scat"></select>
+  <p class="sub" style="margin:12px 0 4px" id="scount">So landen die Dateien später:</p>
+  <div id="sprev" class="mono"></div>
+  <p class="sub" id="snote" style="margin-top:10px">Wird gemerkt: Alle Dateien dieser Serie, auch künftige und vom Zeitplan, bekommen diesen Namen.</p>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="scancel">Abbrechen</button><button class="primary" id="ssave" type="submit">Speichern</button></div>
+</form></dialog>
+
+<dialog id="mdlg" style="width:min(680px,calc(100vw - 32px))"><form method="dialog" id="mform">
+  <h2 style="margin:0 0 4px">Jahr &amp; TMDB-ID eintragen</h2>
+  <p class="sub" id="mdet" style="margin:0 0 12px"></p>
+  <div id="mrows"></div>
+  <p class="sub" id="merr" role="alert" style="margin-top:10px"></p>
+  <p class="sub" style="margin-top:10px">Wird pro Serie gemerkt und gilt auch für künftige Folgen und den Zeitplan. Nicht geänderte Serien bleiben unberührt.</p>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="mcancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+</form></dialog>
+
+<dialog id="fdlg"><form method="dialog" id="fform">
+  <h2 style="margin:0 0 4px">Zielordner ändern</h2>
+  <p class="sub" id="fdet" style="margin:0 0 12px"></p>
+  <label class="l" for="fpath">Zielordner</label>
+  <input type="text" id="fpath" class="mono" autocomplete="off" placeholder="Anime/Dragonball" required>
+  <p class="sub" id="fcount" style="margin:12px 0 4px"></p>
+  <div id="fprev" class="mono"></div>
+  <p class="sub" style="margin-top:10px">Wird für genau diese Dateien gemerkt und gilt auch für den Zeitplan. Später neu geladene Folgen bekommen wieder den Standardpfad.</p>
+  <div class="bar" style="margin-top:14px;justify-content:flex-end"><button type="button" id="freset">Standardpfad</button><button type="button" id="fcancel">Abbrechen</button><button class="primary" type="submit">Speichern</button></div>
+</form></dialog>
+
+<section id="v-run" hidden>
+  <div class="card rcard" id="rcard">
+    <div class="runhead"><div><h2 id="rtitle">Gerade läuft nichts</h2><p class="sub" id="rsub"></p></div><div class="bigpct" id="rpct" hidden>0 %</div></div>
+    <div id="ractive" hidden>
+      <div class="prog run" id="rbar"><i id="rbi"></i></div>
+      <div class="rtiles">
+        <div class="rtile"><small>📄 Dateien</small><b id="rfiles">–</b></div>
+        <div class="rtile"><small>💾 Daten</small><b id="rdata">–</b></div>
+        <div class="rtile"><small>🚀 Tempo</small><b id="rspd">–</b></div>
+        <div class="rtile"><small>⏳ Restzeit</small><b id="reta">–</b></div>
+      </div>
+      <div class="curfile" id="rcur" hidden><div class="row"><span>▶️ Aktuelle Datei</span><b id="rcp"></b></div><code id="rcn"></code><div class="prog thin run" style="margin:8px 0 0"><i id="rcb"></i></div></div>
+      <button class="danger" id="rstop">⛔ Abbrechen</button>
+    </div>
+    <div id="ridle" class="empty" style="padding:18px 0 4px"><div class="big">💤</div><span id="ridle-txt">Wenn kopiert wird, siehst du es hier live.</span>
+      <div class="bar" style="justify-content:center;margin:14px 0 0"><button id="rtosort">📥 Zu Sortieren</button></div></div>
+  </div>
+  <div class="card rcard" id="rwaitcard" hidden>
+    <header><span class="ico">⏳</span><div><h2>Warteschlange</h2><p class="sub" id="rwaitsub"></p></div><button class="danger" id="rwaitclear" style="margin-left:auto">🗑️ Leeren</button></header>
+    <div id="rwait"></div>
+  </div>
+  <div class="card rcard" id="ranacard" hidden>
+    <header><span class="ico">📊</span><div><h2>Codec-Analyse läuft</h2><p class="sub" id="ranatxt"></p></div></header>
+    <div class="prog run"><i id="ranabar"></i></div>
+  </div>
+  <div id="rqwrap" hidden>
+    <div class="bar" id="rchips"></div>
+    <div class="table"><table><thead><tr><th>🚦 Status</th><th>📍 Wird abgelegt als</th><th>💾 Größe</th></tr></thead><tbody id="rrows"></tbody></table></div>
+    <p class="sub" id="rhid" style="margin-top:8px"></p>
+  </div>
+</section>
+
+<section id="v-ext" hidden>
+  <div id="exno" class="banner bad" hidden>⚠️ <span>7-Zip fehlt im Container. Bitte neu bauen: <code>docker compose up -d --build</code></span></div>
+  <div class="card">
+    <header><span class="ico">📦</span><div><h2>Entpacken</h2><p class="sub">RAR (auch .part01.rar, .r00) und ZIP (auch .z01) werden im Quellordner entpackt. Erst danach erscheinen die Dateien unter „Sortieren“.</p></div></header>
+    <div class="bar" style="margin-top:8px"><button id="exscan">↻ Jetzt nach Archiven suchen</button></div>
+  </div>
+  <div id="exlist"></div>
+  <div class="card">
+    <header><span class="ico">🔑</span><div><h2>Passwörter</h2><p class="sub">Werden der Reihe nach ausprobiert. Fehlt eins, bekommst du eine Meldung hier und per Telegram und kannst es dort direkt beantworten.</p></div></header>
+    <div id="expws"></div>
+    <div class="bar" style="margin-top:8px"><input id="expwnew" type="text" placeholder="Neues Passwort" autocomplete="off" autocapitalize="off" spellcheck="false" style="flex:1 1 200px"><button id="expwadd" class="primary">Hinzufügen</button></div>
+  </div>
+  <div class="card" id="exdonecard" hidden>
+    <header><span class="ico">✅</span><div><h2>Zuletzt entpackt</h2></div></header>
+    <div id="exdone"></div>
+  </div>
+</section>
+
+<section id="v-hist" hidden>
+  <div class="bar"><input type="search" id="hq" placeholder="🔍 Titel oder Pfad suchen" style="flex:1 1 240px">
+    <button id="hclear" class="danger">🗑️ Verlauf leeren</button></div>
+  <div class="table"><table>
+    <thead><tr><th>🕒 Wann</th><th>🏷️ Kategorie</th><th>📍 Liegt jetzt hier</th><th>💾 Größe</th><th></th></tr></thead>
+    <tbody id="hrows"></tbody></table>
+    <div id="hempty" class="empty" hidden><div class="big">📭</div><b>Noch nichts verschoben</b>Hier siehst du später, wohin jede Datei gewandert ist.</div></div>
+</section>
+
+<section id="v-clean" hidden>
+  <p class="sub" style="margin-bottom:12px">Das liegt noch im Quellordner. <span class="tag ok">löschbar</span> sind Reste ohne Medien. Alles andere ist geschützt und lässt sich nur mit Extra-Bestätigung löschen.</p>
+  <div class="bar"><button id="cdelall" class="danger">🧹 Alle Reste löschen</button>
+    <button id="cempty">Leere Ordner entfernen</button><button id="cwipe" class="danger">Alles löschen…</button><button id="creload">↻ Neu einlesen</button></div>
+  <div class="table"><table>
+    <thead><tr><th>📁 Name</th><th>📦 Inhalt</th><th>🚦 Status</th><th></th></tr></thead>
+    <tbody id="crows"></tbody></table>
+    <div id="cempty2" class="empty" hidden><div class="big">✨</div><b>Blitzblank</b>Der Quellordner ist leer.</div></div>
+</section>
+
+<section id="v-dup" hidden>
+  <p class="sub" style="margin-bottom:12px">Sucht in der Bibliothek nach Dateien, die doppelt oder fast gleich vorhanden sind: gleicher Titel, gleiche Dateigröße oder ähnlicher Name. Der Scan läuft nur, wenn du ihn startest. Gelöscht wird nur, was du markierst.</p>
+  <div class="bar"><button class="primary" id="dstart">🔁 Duplikate suchen</button><button id="dstop" class="danger" hidden>Abbrechen</button><span id="dmeta" class="sub"></span></div>
+  <div id="dmount" class="banner bad" hidden>⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>
+  <div id="derr" class="banner bad" hidden></div>
+  <div id="dprog" class="card wide" hidden>
+    <div class="row"><span id="dtxt"></span><b id="dpct"></b></div>
+    <div class="prog run"><i id="dpb" style="width:100%"></i></div>
+  </div>
+  <div id="dempty" class="empty card wide" hidden><div class="big">🔁</div><b id="det">Noch kein Scan</b><span id="des"></span></div>
+  <div id="dbody" hidden>
+    <div class="astats">
+      <div class="tile"><span class="sub">Gruppen</span><b id="d-g">0</b></div>
+      <div class="tile"><span class="sub">Dateien betroffen</span><b id="d-f">0</b></div>
+      <div class="tile save"><span>Doppelt belegter Platz</span><b id="d-w">0</b><span>wenn pro Gruppe nur eine Datei bleibt</span></div>
+    </div>
+    <div class="bar"><div class="chips" id="dfilter"></div></div>
+    <div class="bar"><button id="dmarkall">☑️ Vorschlag markieren</button><button id="dmarknone">⬜ Keine</button>
+      <span class="sub">Der Vorschlag behält je Gruppe die Datei mit der höchsten Auflösung, bei Gleichstand die größte.</span></div>
+    <div id="dlist"></div>
+    <div class="bar"><button id="dmore" hidden>Mehr anzeigen</button></div>
+  </div>
+</section>
+
+<section id="v-ana" hidden>
+  <p class="sub" style="margin-bottom:12px">Welche Video-Codecs liegen bei dir, und wie viel Platz würde H.265 theoretisch sparen? Es werden nur die Kopfdaten der Dateien gelesen, nichts wird verändert.</p>
+  <div class="bar"><div class="chips" id="ascope"></div></div>
+  <div class="bar"><button class="primary" id="astart">🔍 Analyse starten</button><button id="astop" class="danger" hidden>Abbrechen</button><span id="ameta" class="sub"></span></div>
+  <div id="anoff" class="banner warn" hidden>⚠️ <span>ffprobe ist nicht installiert. Im Docker-Image ist es enthalten, bitte neu bauen: <code>docker compose up -d --build</code></span></div>
+  <div id="aerr" class="banner bad" hidden></div>
+  <div id="aprog" class="card wide" hidden>
+    <div class="row"><span id="atxt"></span><b id="apct">0 %</b></div>
+    <div class="prog run"><i id="apb"></i></div>
+  </div>
+  <div id="aempty" class="empty card wide" hidden><div class="big">📊</div><b id="aet">Noch keine Analyse</b><span id="aes">Starte die Analyse, um die Codecs zu sehen.</span></div>
+  <div id="abody" hidden>
+    <div class="astats">
+      <div class="tile"><span class="sub">Videodateien</span><b id="a-n">0</b></div>
+      <div class="tile"><span class="sub">Gesamtgröße</span><b id="a-size">0</b></div>
+      <div class="tile save"><span>Mögliche Ersparnis mit H.265</span><b id="a-sav">0</b><span id="a-pct"></span></div>
+    </div>
+    <div class="card wide">
+      <h2>Codecs nach Größe</h2>
+      <div class="sbar" id="sbar" style="margin:10px 0 6px"></div>
+      <div id="clist"></div>
+    </div>
+    <div class="card wide">
+      <h2>Annahme für die Ersparnis</h2>
+      <p class="sub" style="margin-bottom:8px">Echte Werte hängen von Quelle, Qualität und Einstellungen ab. Typisch sind 30 bis 50 % bei H.264. Das ist eine Schätzung, kein Versprechen.</p>
+      <label class="l" for="p264">H.264 zu H.265: <b id="v264"></b></label>
+      <input type="range" id="p264" min="10" max="70" step="5" style="width:100%">
+      <label class="l" for="pold">Ältere Codecs (MPEG-2/4, VC-1, WMV …): <b id="vold"></b></label>
+      <input type="range" id="pold" min="30" max="85" step="5" style="width:100%">
+      <p class="sub" style="margin-top:8px;font-size:13px">H.265 und AV1 zählen mit 0 %, VP9 mit 15 %. Umwandeln kostet Rechenzeit und etwas Qualität, und nicht jedes Abspielgerät kann H.265 direkt.</p>
+    </div>
+    <div class="bar"><input type="search" id="aq" placeholder="🔍 Datei suchen" style="flex:1 1 220px"><button id="acsv">⬇ CSV speichern</button></div>
+    <div class="bar"><div class="chips" id="afilter"></div></div>
+    <div class="table"><table>
+      <thead><tr><th>Datei</th><th>Codec</th><th>Auflösung und Bitrate</th><th>Größe</th><th>Ersparnis</th></tr></thead>
+      <tbody id="arows"></tbody></table>
+      <div id="anone" class="empty" hidden><b>Keine Treffer</b></div></div>
+    <div class="bar" style="margin-top:12px;justify-content:center"><button id="amore" hidden>Mehr anzeigen</button></div>
+  </div>
+</section>
+
+<section id="v-sched" hidden>
+  <div class="card">
+    <header><span class="ico">⏰</span><div><h2>Automatischer Zeitplan</h2><p class="sub">Sortiert und kopiert zu festen Zeiten von allein.</p></div></header>
+    <label class="opt"><input type="checkbox" id="en"><span><b>Zeitplan einschalten</b><small>Dateien ohne klare Zuordnung bleiben liegen, bis du sie zuordnest.</small></span></label>
+    <label class="l" for="cron">Wann soll es laufen?</label>
+    <div class="chips" id="presets" style="margin:6px 0 8px"></div>
+    <div class="field"><input type="text" class="mono" id="cron" aria-label="Cron-Ausdruck" spellcheck="false" autocapitalize="off"></div>
+    <div class="sub" style="font-size:13px">Eigener Ausdruck: Minute, Stunde, Tag, Monat, Wochentag (0 = Sonntag). Zeitzone: <b id="tz"></b></div>
+    <div id="cerr" class="err"></div>
+    <div class="sub" style="margin-top:8px">Nächste Läufe:</div><ul class="next" id="next"></ul>
+    <div class="bar" style="margin-top:12px"><button class="primary" id="save">Speichern</button><span id="saved" class="sub"></span></div>
+    <div id="nop" class="banner warn" hidden>⚠️ Einstellungen gehen beim Neustart verloren. Binde ein Volume auf /data ein.</div>
+  </div>
+  <div class="card">
+    <header><span class="ico">▶️</span><div><h2>Letzter Lauf</h2></div></header>
+    <p id="last" class="sub" style="margin-bottom:10px"></p>
+    <button id="runnow">Jetzt alle fertigen Dateien verarbeiten</button><span id="runmsg" class="sub" style="margin-left:8px"></span>
+  </div>
+</section>
+
+<section id="v-set" hidden>
+  <div id="nop2" class="banner warn" hidden>⚠️ <span>Einstellungen gehen beim Neustart verloren. Binde ein Volume auf /data ein.</span></div>
+  <div class="card">
+    <header><span class="ico">📦</span><div><h2>Entpacken</h2><p class="sub">Gilt für RAR-, ZIP- und 7z-Archive im Quellordner (Übersicht im Reiter „Entpacken“).</p></div></header>
+    <label class="opt"><input type="checkbox" id="exauto"><span><b>Automatisch entpacken</b><small>Fertig geladene Archive werden von allein entpackt. Aus: nur per Knopfdruck.</small></span></label>
+    <label class="opt"><input type="checkbox" id="exdel"><span><b>Archive nach dem Entpacken löschen</b><small>Alle Teile werden gelöscht, sobald alles fehlerfrei entpackt wurde.</small></span></label>
+  </div>
+  <div class="card">
+    <header><span class="ico">🗂️</span><div><h2>Verarbeitung</h2><p class="sub">Gilt fürs manuelle Kopieren und für den Zeitplan.</p></div></header>
+    <label class="opt"><input type="checkbox" id="mv"><span><b>Quelle nach dem Kopieren löschen</b><small>Dateien werden verschoben statt kopiert.</small></span></label>
+    <label class="opt"><input type="checkbox" id="cu"><span><b>Reste danach aufräumen</b><small>Ordner ohne Medien werden automatisch gelöscht.</small></span></label>
+    <label class="opt"><input type="checkbox" id="jf"><span><b>Jellyfin-Benennung</b><small>Ordner und Dateien werden umbenannt: „Titel (Jahr)“ bzw. „Serie/Season 01/Serie S01E02“. Aus: Originalnamen bleiben.</small></span></label>
+    <label class="opt"><input type="checkbox" id="jfs"><span><b>Jellyfin-Bibliothek nach der Warteschlange scannen</b><small>Sobald alle Aufträge durch sind und etwas kopiert wurde, wird einmal ein Scan ausgelöst.</small></span></label>
+    <div id="jfbox" style="margin:6px 0 0 30px;display:grid;gap:8px">
+      <input id="jfurl" placeholder="http://jellyfin:8096" autocomplete="off">
+      <input id="jfkey" type="password" placeholder="API-Key (Jellyfin → Dashboard → API-Schlüssel)" autocomplete="off">
+      <select id="jfmode" aria-label="Scan-Umfang"><option value="partial">Nur geänderte Ordner scannen (schnell)</option><option value="full">Ganze Bibliothek scannen</option></select>
+      <input id="jfroot" placeholder="Pfad in Jellyfin, z. B. /data" autocomplete="off">
+      <div class="bar"><button id="jftest">Scan jetzt testen</button><span id="jfmsg" class="sub"></span></div>
+    </div>
+    <div class="bar" style="margin-top:12px"><button class="primary" id="save2">Speichern</button><span id="saved2" class="sub"></span></div>
+  </div>
+  <div class="card">
+    <header><span class="ico">✈️</span><div><h2>Telegram</h2><p class="sub">Bekomme eine Nachricht, wenn etwas passiert.</p></div></header>
+    <label class="opt"><input type="checkbox" id="tge"><span><b>Benachrichtigungen einschalten</b></span></label>
+    <div class="field">
+      <input type="password" id="tgtok" class="mono tok" autocomplete="off" aria-label="Bot-Token">
+      <input type="text" id="tgchat" class="mono" placeholder="Chat-ID" aria-label="Chat-ID" autocapitalize="off">
+    </div>
+    <label class="l" for="puburl">Adresse dieser Seite (für Links in den Nachrichten)</label>
+    <div class="field"><input type="url" id="puburl" class="mono" placeholder="https://media.p.pixelpotato.de" autocapitalize="off" spellcheck="false"></div>
+    <div class="grp">Infos <small>kommen leise, wenn „stumm“ an ist</small></div>
+    <label class="opt"><input type="checkbox" id="tgn"><span><b>Neue Dateien sind da</b><small>Nachdem sich in der Quelle zwei Minuten nichts mehr tut</small></span></label>
+    <label class="opt"><input type="checkbox" id="tgs"><span><b>Kopieren beginnt</b></span></label>
+    <label class="opt"><input type="checkbox" id="tgp"><span><b>Fortschritt bei 25, 50 und 75 %</b><small>Nur bei Läufen, die länger als etwa 20 Sekunden dauern</small></span></label>
+    <label class="opt"><input type="checkbox" id="tgd"><span><b>Alles fertig</b><small>Mit Zielpfaden</small></span></label>
+    <div class="grp">Dringend <small>immer mit Ton und 🚨</small></div>
+    <label class="opt"><input type="checkbox" id="tgu"><span><b>Datei braucht Klärung</b><small>Mit Link direkt zur Auswahl</small></span></label>
+    <label class="opt"><input type="checkbox" id="tgr"><span><b>Fehler, Abbruch oder Ziel nicht erreichbar</b><small>Zum Beispiel wenn das NFS-Share fehlt</small></span></label>
+    <div class="grp">Ton</div>
+    <label class="opt"><input type="checkbox" id="tgq"><span><b>Infos stumm senden</b><small>Nur dringende Meldungen machen dann ein Geräusch</small></span></label>
+    <details><summary>So richtest du den Bot ein</summary><ol>
+      <li>In Telegram <b>@BotFather</b> öffnen, <code>/newbot</code> senden und den Token kopieren.</li>
+      <li>Deinem neuen Bot eine beliebige Nachricht schreiben.</li>
+      <li>Mit <b>@userinfobot</b> deine Chat-ID herausfinden und oben eintragen.</li>
+      <li>Auf „Testnachricht senden“ tippen. Der Token wird unverschlüsselt in /data/config.json gespeichert.</li></ol></details>
+    <div class="bar" style="margin-top:12px"><button class="primary" id="tgsave">Speichern</button><button id="tgtest">Test: normal</button><button id="tgtest2">Test: dringend</button><span id="tgmsg" class="sub"></span></div>
+  </div>
+  <div class="card">
+    <header><span class="ico">📺</span><div><h2>Gemerkte Serien</h2><p class="sub">Eigene Namen, Jahr und TMDB-ID. Im Tab Sortieren auf eine erkannte Serie tippen, um eine anzulegen.</p></div></header>
+    <div id="rules"></div>
+  </div>
+  <div class="card">
+    <header><span class="ico">🔎</span><div><h2>Metadaten-Quellen</h2><p class="sub">Zum Suchen von Name, Jahr und ID im Gruppen- und Umbenennen-Dialog. Die ID landet als <code>[tmdbid-…]</code> bzw. <code>[tvdbid-…]</code> im Ordnernamen, so erkennt Jellyfin die Serie sicher.</p></div></header>
+    <label class="mon"><input type="checkbox" id="mon-tmdb"> TMDB (Filme, Serien)</label>
+    <label class="mon"><input type="checkbox" id="mon-tvdb"> TVDB (Serien, Filme)</label>
+    <label class="mon"><input type="checkbox" id="mon-anilist"> AniList (Anime, ohne Key)</label>
+    <label class="mon"><input type="checkbox" id="mon-jikan"> MyAnimeList über Jikan (Anime, ohne Key)</label>
+    <label class="l" for="mkey-tmdb">TMDB API-Key (kostenlos: themoviedb.org → Einstellungen → API)</label>
+    <input type="password" id="mkey-tmdb" class="mono" autocomplete="off" placeholder="API-Key oder Lesetoken">
+    <label class="l" for="mkey-tvdb">TVDB API-Key (kostenlos: thetvdb.com/api-information)</label>
+    <input type="password" id="mkey-tvdb" class="mono" autocomplete="off" placeholder="API-Key">
+    <div class="bar"><button id="msave">Speichern</button><button id="mtest" class="primary">🔎 Quellen testen</button></div>
+    <div id="mres" class="sub"></div>
+  </div>
+  <div class="card">
+    <header><span class="ico">⬆️</span><div><h2>Update</h2><p class="sub" id="updsub">Holt die neueste app.py aus GitHub. Danach startet MediaButler neu.</p></div></header>
+    <div id="updwarn" class="banner warn" hidden></div>
+    <label class="l" for="updrepo">GitHub-Repo</label>
+    <input type="text" id="updrepo" class="mono" placeholder="habobababo/mediabutler" autocomplete="off" autocapitalize="off">
+    <label class="l" for="updtok">Token (nur bei privatem Repo nötig)</label>
+    <input id="updtok" class="mono" type="password" placeholder="github_pat_…" autocomplete="off">
+    <div class="bar"><button id="updsave">Speichern</button><button id="updchk" class="primary">🔍 Auf Updates prüfen</button><button id="updgo" class="primary" hidden>⬆️ Jetzt aktualisieren</button><button id="updback" hidden>↩️ Vorherige Version</button></div>
+    <div id="updres" class="sub"></div>
+  </div>
+  <div class="card">
+    <header><span class="ico">🖥️</span><div><h2>System</h2><p class="sub">Wird in der docker-compose.yml festgelegt.</p></div></header>
+    <div id="sysinfo"></div>
+  </div>
+</section>
+</main>
+
+<div class="dock"><div>
+  <div class="sched"><span id="sch"></span><button class="link" id="schgo">Ändern</button></div>
+  <div id="dk-run" hidden><div class="row"><span id="cur">Bereit</span><b id="spd"></b></div>
+  <div class="prog thin run"><i id="pf"></i></div></div>
+  <div id="dk-tot" hidden><div class="row"><span id="txt"></span><b id="pct">0 %</b></div>
+  <div class="prog" id="ptw"><i id="pt"></i></div></div>
+  <div id="dk-dup" hidden><div class="row"><span id="dsel">Nichts markiert</span></div>
+  <div class="bar"><button class="danger" id="ddel" disabled>🗑 Markierte löschen</button></div></div>
+  <div class="bar"><button class="primary" id="go">Auswahl kopieren</button><button id="stop" class="danger" hidden>Abbrechen</button></div>
+  <div class="err" id="err"></div>
+</div></div>
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=b=>{const u=["B","KB","MB","GB","TB"];let i=0;while(b>=1024&&i<4){b/=1024;i++}return b.toFixed(i?1:0)+" "+u[i]};
+const fdate=t=>{const[a,b]=t.split(" ");const d=a.split("-");return `${d[2]}.${d[1]}.${d[0]} ${b.slice(0,5)}`};
+const ICON={Filme:"🎬",Serien:"📺",Anime:"🌸",Dokus:"🌍"};
+function toast(msg,kind=""){const t=document.createElement("div");t.className="toast "+kind;t.textContent=msg;$("toasts").appendChild(t);setTimeout(()=>t.remove(),kind==="bad"?6000:3200)}
+function setBadge(id,n){const b=$(id);b.hidden=!n;b.textContent=n||""}
+async function api(u,body){
+  const r=await fetch(u,body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  let j={};try{j=await r.json()}catch{}
+  if(!r.ok)throw new Error(j.error||r.statusText);return j}
+async function copyText(t,btn){
+  try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(t);else throw 0}
+  catch{const a=document.createElement("textarea");a.value=t;a.style.cssText="position:fixed;opacity:0";document.body.appendChild(a);a.select();try{document.execCommand("copy")}catch{}a.remove()}
+  toast("Pfad kopiert","ok")}
+
+let view="sort",files=[],cats=[],filter="Alle",hist=[],running=false;
+function show(v){view=v;try{history.replaceState(null,"",v==="sort"?location.pathname+location.search:"#"+v)}catch{}
+  for(const s of["sort","run","ext","hist","clean","dup","ana","sched","set"])$("v-"+s).hidden=s!==v;
+  $("nav").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  $("go").hidden=v!=="sort";$("dk-dup").hidden=v!=="dup";document.querySelector(".dock .sched").hidden=v==="dup";
+  ({sort:loadFiles,run:()=>api("/api/status").then(renderRun),ext:loadExt,hist:loadHist,clean:loadClean,dup:loadDup,ana:loadAna,sched:loadSched,set:loadSched})[v]()}
+$("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
+
+
+/* Entpacken */
+const EXST={läuft:["⏳","entpackt","ok"],wartet:["🕒","wartet",""],unvollständig:["🧩","wartet auf Teile","warn"],passwort:["🔑","Passwort fehlt","bad"],fehler:["⛔","Fehler","bad"]};
+async function loadExt(){
+  if($("v-ext").contains(document.activeElement)&&document.activeElement.tagName==="INPUT")return;   // sonst schließt sich die Tastatur am Handy
+  renderExt(await api("/api/extract"))}
+function renderExt(r){
+  const pwFirst=(r.items.find(e=>e.state==="passwort")||{}).id;
+  $("exno").hidden=r.available;$("exauto").checked=r.auto;$("exdel").checked=r.delete;
+  $("exlist").innerHTML=r.items.length?r.items.map(e=>{const [ic,lb,cl]=EXST[e.state]||["",e.state,""];
+    const act=e.state==="läuft"?`<button data-a="cancel" data-id="${e.id}">⏹ Abbrechen</button>`
+      :`<button data-a="start" data-id="${e.id}">▶️ ${e.state==="wartet"&&e.auto?"Jetzt starten":"Jetzt entpacken"}</button><button class="ghost" data-a="dismiss" data-id="${e.id}" title="Aus der Liste nehmen, bis sich das Archiv ändert">Ignorieren</button>`;
+    return `<div class="exitem" data-id="${e.id}"><div class="exh"><b>📦 ${esc(e.name)}</b><span class="tag ${cl}">${ic} ${lb}</span></div>
+      <div class="sub mono">${esc(e.dir||"/")} · ${e.nparts} Teil(e) · ${fmt(e.size)}</div>
+      ${e.state==="läuft"?`<div class="prog run"><i style="width:${e.pct}%"></i></div><div class="sub">${e.pct} % ${esc(e.msg)}</div>`:(e.msg?`<div class="sub">${esc(e.msg)}</div>`:"")}
+      ${e.state==="passwort"?(e.id===pwFirst?`<div class="bar"><input type="text" class="expw" placeholder="Passwort (gilt für alle wartenden Archive)" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="primary" data-a="pw">🔑 Speichern &amp; erneut versuchen</button></div>`:'<div class="sub">🔑 Wartet auf dasselbe Passwort – Eingabe siehe oben.</div>'):""}
+      <div class="bar">${act}</div></div>`}).join("")
+    :'<div class="card empty"><div class="big">📭</div><b>Keine Archive im Quellordner</b>Neue .rar- und .zip-Dateien werden automatisch erkannt.</div>';
+  $("expws").innerHTML=r.pws.length?r.pws.map((p,i)=>`<div class="exrow"><span class="mono">${esc(p)}</span><button class="danger" data-pwdel="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Passwörter gespeichert.</p>';
+  $("exdonecard").hidden=!r.done.length;
+  $("exdone").innerHTML=r.done.map(d=>`<div class="exrow"><span>🎬 <b>${esc((d.out&&d.out[0])||d.name)}</b> <span class="sub">${d.files>1?`+${d.files-1} weitere · `:""}${d.pw?"🔑 · ":""}aus ${esc(d.name)}</span></span><span class="sub">${new Date(d.ended*1000).toLocaleString("de-DE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · ${d.deleted?"Archiv gelöscht":"Archiv behalten"}${d.warn?" · mit Warnungen":""}</span></div>`).join("")}
+$("exlist").onclick=async ev=>{const b=ev.target.closest("button[data-a]");if(!b)return;const id=b.dataset.id,a=b.dataset.a;
+  try{if(a==="pw"){const v=b.closest(".exitem").querySelector(".expw").value;if(!v)return toast("Bitte ein Passwort eingeben","bad");
+      const r=await api("/api/extract/password",{pw:v});toast("Passwort gespeichert, versuche es erneut","ok");renderExt(r)}
+    else if(a==="cancel"){await api("/api/extract/cancel",{id});toast("Wird abgebrochen …","ok")}
+    else renderExt(await api("/api/extract/"+a,{id}))}catch(e){toast(e.message,"bad")}};
+$("expws").onclick=async ev=>{const b=ev.target.closest("[data-pwdel]");if(b)renderExt(await api("/api/extract/password/delete",{i:+b.dataset.pwdel}))};
+$("expwadd").onclick=async()=>{const v=$("expwnew").value;if(!v)return;try{renderExt(await api("/api/extract/password",{pw:v}));$("expwnew").value="";toast("Passwort gespeichert","ok")}catch(e){toast(e.message,"bad")}};
+const exSet=async()=>renderExt(await api("/api/extract/settings",{auto:$("exauto").checked,delete:$("exdel").checked}));
+$("exauto").onchange=exSet;$("exdel").onchange=exSet;
+$("exscan").onclick=async()=>{renderExt(await api("/api/extract/scan",{}));toast("Neu gesucht","ok")};
+$("exgo").onclick=()=>show("ext");
+
+/* Sortieren */
+const unclearN=()=>files.filter(f=>!f.category).length;
+let showCopied=false,emptyHtml="";const lastRow={v:null},lastGrp={v:null};
+const checked=f=>f.sel===true;
+let grouped=false,sgrouped=true,groups=[],sgroups=[],sopen=new Set(["","d:"]);try{grouped=localStorage.getItem("sort_grp")==="1";const sg=localStorage.getItem("sort_sgrp");sgrouped=sg===null?!grouped:sg==="1";if(sgrouped)grouped=false}catch{}
+function stats(){const u=unclearN();
+  $("st-ready").textContent=files.length-u;$("st-clar").textContent=u;
+  $("st-clar-box").classList.toggle("alert",u>0);setBadge("ns",u)}
+async function loadFiles(){
+  await loadRules();
+  const r=await api("/api/files"),marked=new Set(files.filter(checked).map(f=>f.path));library=r.library||{};cats=r.categories;
+  const nc=r.files.filter(f=>f.copied).length;files=showCopied?r.files:r.files.filter(f=>!f.copied&&!f.busy);
+  $("shc").hidden=!nc;$("shcn").textContent=nc;$("shc").classList.toggle("on",showCopied);
+  files.forEach(f=>{f.sel=marked.has(f.path)});
+  const xe=r.extracting||{};$("exbar").hidden=!xe.n;$("extxt").textContent=`${xe.n} Archiv(e) werden entpackt oder warten darauf. Die Dateien erscheinen danach hier.`;
+  $("src").textContent=r.source;$("tgt").textContent=r.target;
+  $("warn").innerHTML=r.target_mounted?"":'<div class="banner bad">⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>';
+  $("bchips").innerHTML=cats.map(c=>`<button class="chip" data-c="${c}">${ICON[c]} ${c}</button>`).join("");
+  $("bchips").querySelectorAll("button").forEach(b=>b.onclick=()=>assign(files.filter(checked),b.dataset.c));
+  $("grp").classList.toggle("on",grouped);$("sgrp").classList.toggle("on",sgrouped);
+  tabs();render()}
+function seriesBar(){
+  const m=new Map();
+  visible().forEach(f=>{const s=f.series;if(!s)return;const e=m.get(s.key)||{key:s.key,names:{},files:[],cats:{}};
+    e.names[s.name]=(e.names[s.name]||0)+1;e.files.push(f);e.cats[f.category||"?"]=(e.cats[f.category||"?"]||0)+1;m.set(s.key,e)});
+  const list=[...m.values()].filter(e=>e.files.length>=1).sort((a,b)=>b.files.length-a.files.length).slice(0,40);
+  seriesList=list;$("series").hidden=sgrouped||!list.length;
+  $("schips").innerHTML=list.map((e,i)=>{const n=Object.entries(e.names).sort((a,b)=>b[1]-a[1])[0][0];
+    const c=Object.entries(e.cats).sort((a,b)=>b[1]-a[1])[0][0];
+    const gp=gaps(e.files).bad.length?" · ⚠ Lücke":"";
+    return `<button class="chip" data-s="${i}"><b>${esc(n)}</b> <small>${e.files.length} · ${c==="?"?"❓ unklar":ICON[c]+" "+c}${gp}</small></button>`}).join("");
+  $("schips").querySelectorAll("button").forEach(b=>b.onclick=()=>openSeries(seriesList[b.dataset.s]))}
+let seriesList=[],curSeries=null,ptm,library={};
+const rng=a=>{const o=[];for(let i=0;i<a.length;){let j=i;while(j+1<a.length&&a[j+1]===a[j]+1)j++;o.push(i===j?`E${String(a[i]).padStart(2,"0")}`:`E${String(a[i]).padStart(2,"0")}–E${String(a[j]).padStart(2,"0")}`);i=j+1}return o.join(", ")};
+const showDir=t=>{const p=t.split("/"),i=p.findIndex(x=>/^Season \d+$/.test(x));return(i>1?p.slice(0,i):p.slice(0,2)).join("/")};
+function gaps(fs){
+  const by={};fs.forEach(f=>{const s=f.series;if(!s)return;const sd=f.target?showDir(f.target):"";
+    s.eps.forEach(e=>{const b=by[s.season]=by[s.season]||{n:{},sd};b.n[e]=(b.n[e]||0)+1;if(!b.sd)b.sd=sd})});
+  const bad=[],good=[];
+  Object.keys(by).sort((a,b)=>a-b).forEach(sn=>{const b=by[sn],lib=((library[b.sd]||{})[sn])||[];
+    const have=new Set([...Object.keys(b.n).map(Number),...lib]),all=[...have].sort((a,c)=>a-c);
+    const lo=all[0],hi=all[all.length-1],miss=[];for(let i=lo;i<=hi;i++)if(!have.has(i))miss.push(i);
+    const dup=Object.entries(b.n).filter(([,c])=>c>1).map(([e])=>+e).sort((a,c)=>a-c);
+    const p=[];
+    if(lo>1)p.push(`beginnt erst bei E${String(lo).padStart(2,"0")}`);
+    if(miss.length)p.push(`Lücke ${rng(miss)}`);
+    if(dup.length)p.push(`doppelt ${rng(dup)}`);
+    const S="S"+String(sn).padStart(2,"0");
+    if(p.length)bad.push(`${S}: ${p.join(", ")}`);else good.push(`${S} lückenlos ${rng([...new Set([lo,hi])]).replace(", ","–")}${lib.length?` (${lib.length} schon im Ziel)`:""}`)});
+  return{bad,good}}
+const gapHtml=fs=>{const g=gaps(fs);return g.bad.length?`<div class="gap">⚠ ${g.bad.map(esc).join(" · ")}</div>`:g.good.length&&fs.length>1?`<div class="gap ok">✓ ${g.good.map(esc).join(" · ")}</div>`:""};
+async function sprev(){
+  const cat=$("scat").value||"Serien";
+  try{const r=await api("/api/series/preview",{name:$("sname").value,year:$("syear").value,tmdb:$("stmdb").value,category:cat,
+      samples:curSeries.files.map(f=>({path:f.path}))});
+    const n=curSeries.files.length,okn=r.targets.filter(Boolean).length;
+    const g=gaps(curSeries.files);
+    $("scount").innerHTML=`<b>${okn} von ${n} Dateien</b> werden so abgelegt:`+(g.bad.length?`<div class="gap">⚠ ${g.bad.map(esc).join(" · ")}</div>`:g.good.length&&n>1?`<div class="gap ok">✓ ${g.good.map(esc).join(" · ")}</div>`:"");
+    $("sprev").innerHTML=curSeries.files.map((f,i)=>`<div>${esc(f.path)}<small>→ ${esc(r.targets[i]||"nicht erkannt, bleibt unverändert")}</small></div>`).join("")}catch{}}
+function openSeries(e){
+  curSeries=e;const n=Object.entries(e.names).sort((a,b)=>b[1]-a[1])[0][0];
+  const r=rulesCache.find(x=>e.files.some(f=>f.series&&f.series.rkey===x.key));
+  $("sname").value=r?r.name:n;$("syear").value=r?r.year:(e.files[0].series.year||"");$("stmdb").value=r?r.tmdb:"";
+  const cur=r&&r.category||Object.entries(e.cats).filter(([c])=>c!=="?").sort((a,b)=>b[1]-a[1]).map(x=>x[0])[0]||"";
+  $("scat").innerHTML=`<option value="">${cur?"":"Bitte wählen…"}</option>`+cats.map(c=>`<option value="${c}" ${c===cur?"selected":""}>${ICON[c]} ${c}</option>`).join("");
+  if(cur)$("scat").firstElementChild.remove();
+  const o=new Map();e.files.forEach(f=>{if(f.series)o.set(f.series.rkey,f.series.orig)});
+  curSeries.origs=[...o.values()];
+  $("sdet").textContent=`${e.files.length} Datei(en)`+(curSeries.origs.length>1?`, vereint aus: ${curSeries.origs.map(x=>"„"+x+"“").join(", ")}`:`, erkannt als „${curSeries.origs[0]||n}“`);
+  $("sdlg").querySelector("h2").textContent=curSeries.origs.length>1?"Serien vereinen":"Serie umbenennen";
+  $("sdlg").showModal();sprev()}
+["sname","syear","stmdb","scat"].forEach(id=>$(id).addEventListener("input",()=>{clearTimeout(ptm);ptm=setTimeout(sprev,250)}));
+$("scancel").onclick=()=>$("sdlg").close();
+$("sform").onsubmit=async ev=>{ev.preventDefault();
+  if(!$("scat").value){toast("Bitte eine Kategorie wählen","bad");return}
+  try{
+    let r;for(const d of curSeries.origs)r=await api("/api/rules",{detected:d,name:$("sname").value,year:$("syear").value,tmdb:$("stmdb").value,category:$("scat").value});
+    await api("/api/paths",{items:curSeries.files.map(f=>f.path),folder:""});
+    rulesCache=r.rules;$("sdlg").close();await reloadKeep();toast("Serie gemerkt","ok")
+  }catch(e){toast(e.message,"bad")}};
+/* Zusammengelegte Serien wieder trennen: löscht die gemerkten Regeln der enthaltenen Namen */
+async function splitSeries(fs){
+  const names=new Map();fs.forEach(f=>{if(f.series)names.set(f.series.rkey,f.series.orig)});
+  const rules=rulesCache.filter(r=>names.has(r.key));
+  if(!rules.length){toast("Zu dieser Gruppe gibt es keine gemerkte Regel zum Aufheben.","bad");return}
+  const list=[...names.values()].map(x=>"„"+x+"“").join(", ");
+  if(!confirm(`Aufteilen in: ${list}\n\nDie gemerkten Namen, Jahre und TMDB-IDs dieser ${rules.length} Regel(n) werden gelöscht. Danach gilt wieder der erkannte Name.`))return;
+  try{for(const r of rules)rulesCache=(await api("/api/rules/delete",{key:r.key})).rules;
+    await reloadKeep();toast(`Aufgeteilt in ${names.size} Serien`,"ok")}
+  catch(e){toast(e.message,"bad")}}
+async function reloadKeep(){
+  const before=new Map(files.map(f=>[f.path,{sel:f.sel,had:!!f.category}]));
+  await loadFiles();
+  files.forEach(f=>{const b=before.get(f.path);if(!b)return;f.sel=!b.had&&f.category?true:b.sel});
+  tabs();render()}
+/* Zielordner: ersetzt den gemeinsamen Anfang der Pfade (höchstens Kategorie/Serie) */
+let curFolder=[],ftm;
+function commonFolder(fs){
+  const ds=fs.filter(f=>f.target).map(f=>f.target.split("/").slice(0,-1));if(!ds.length)return"";
+  let n=Math.min(2,...ds.map(d=>d.length));
+  while(n>1&&new Set(ds.map(d=>d.slice(0,n).join("/"))).size>1)n--;
+  return new Set(ds.map(d=>d[0])).size>1?"":ds[0].slice(0,n).join("/")}
+/* Zielpfad einer Gruppe für den Kopf: gemeinsamer Ordner (Kategorie/Serie), sonst Hinweis */
+function gpath(fs){
+  const t=fs.filter(f=>f.category&&f.target),u=fs.length-t.length;
+  if(!t.length)return`<div class="gpath">❓ noch kein Ziel</div>`;
+  const cats=new Set(t.map(f=>f.target.split("/")[0])),dir=cats.size>1?"":commonFolder(t);
+  const txt=cats.size>1?"verschiedene Kategorien":dir||"mehrere Ziele";
+  return`<div class="gpath mono" title="${esc(dir||txt)}">📍 ${esc(txt)}${u?` <span class="tag warn">❓ ${u} unklar</span>`:""}</div>`}
+async function fprev(){
+  const folder=$("fpath").value,n=curFolder.length;
+  if(!folder.trim()){$("fcount").textContent="Bitte einen Ordner eingeben, z. B. Anime/Dragonball";$("fprev").innerHTML="";return}
+  try{const r=await api("/api/paths/preview",{items:curFolder.map(f=>f.path),folder});
+    if($("fpath").value!==folder)return;
+    $("fcount").innerHTML=`<b>${n} ${n===1?"Datei wird":"Dateien werden"}</b> so abgelegt:`;
+    $("fprev").innerHTML=curFolder.slice(0,200).map((f,i)=>`<div>${esc(f.path)}<small>→ ${esc(r.targets[i]||"")}</small></div>`).join("")
+      +(n>200?`<div>… und ${n-200} weitere</div>`:"")}
+  catch(e){$("fcount").textContent=e.message;$("fprev").innerHTML=""}}
+function openFolder(list){
+  if(!list.length)return;
+  curFolder=list;$("fpath").value=commonFolder(list);
+  const names=new Set(list.filter(f=>f.series).map(f=>f.series.key));
+  $("fdet").textContent=`${list.length} Datei(en)`+(names.size>1?` aus ${names.size} Serien, jede bleibt als eigener Unterordner erhalten`:"");
+  $("fdlg").showModal();fprev()}
+$("fbtn").onclick=()=>openFolder(files.filter(checked));
+$("fpath").addEventListener("input",()=>{clearTimeout(ftm);ftm=setTimeout(fprev,250)});
+$("fcancel").onclick=()=>$("fdlg").close();
+/* Jahr & TMDB für mehrere Serien */
+let metaRows=[];
+function openMeta(){
+  metaRows=[...mergeCandidates().values()].map(fs=>{
+    const rule=rulesCache.find(x=>fs.some(f=>f.series.rkey===x.key)),n={},c={},o=new Map();
+    fs.forEach(f=>{n[f.series.name]=(n[f.series.name]||0)+1;if(f.category)c[f.category]=(c[f.category]||0)+1;o.set(f.series.rkey,f.series.orig)});
+    const top=m=>Object.entries(m).sort((a,b)=>b[1]-a[1]).map(e=>e[0])[0]||"";
+    return{name:rule?rule.name:top(n),count:fs.length,origs:[...o.values()],category:rule&&rule.category||top(c),
+      year:rule?rule.year:(fs[0].series.year||""),tmdb:rule?rule.tmdb:""}}).sort((a,b)=>a.name.localeCompare(b.name));
+  $("mdet").textContent=`${metaRows.length} markierte ${metaRows.length===1?"Serie":"Serien"}`;$("merr").textContent="";
+  $("mrows").innerHTML=`<div class="mrow head"><span>Serie</span><span>Jahr</span><span>ID</span></div>`+metaRows.map((r,i)=>`<div class="mrow"><div><b>${esc(r.name)}</b> <span class="sub">${r.count} Datei(en)</span></div>
+    <input type="text" data-y="${i}" inputmode="numeric" maxlength="4" placeholder="1996" value="${esc(r.year)}" aria-label="Jahr von ${esc(r.name)}">
+    <input type="text" data-t="${i}" placeholder="12609 / tvdb:81189" value="${esc(r.tmdb)}" aria-label="ID von ${esc(r.name)}"></div>`).join("");
+  $("mdlg").showModal()}
+$("mbtn").onclick=openMeta;
+$("mcancel").onclick=()=>$("mdlg").close();
+$("mform").onsubmit=async ev=>{ev.preventDefault();
+  const val=(a,i)=>$("mrows").querySelector(`[data-${a}="${i}"]`).value.trim();
+  let bad=false;$("mrows").querySelectorAll("input").forEach(x=>x.classList.remove("bad"));
+  metaRows.forEach((r,i)=>{if(val("y",i)&&!/^(19[2-9]\d|20[0-3]\d)$/.test(val("y",i))){$("mrows").querySelector(`[data-y="${i}"]`).classList.add("bad");bad=true}
+    if(val("t",i)&&!/^(?:(?:tmdb|tvdb)(?:id)?\s*[:\-_ ]?\s*)?\d{1,10}$/i.test(val("t",i))){$("mrows").querySelector(`[data-t="${i}"]`).classList.add("bad");bad=true}});
+  if(bad){$("merr").textContent="Bitte die markierten Felder prüfen: Jahr als 1920 bis 2039, TMDB-ID nur als Zahl.";return}
+  const todo=metaRows.map((r,i)=>({r,year:val("y",i),tmdb:val("t",i)})).filter(x=>x.year!==x.r.year||x.tmdb!==x.r.tmdb);
+  if(!todo.length){$("mdlg").close();toast("Nichts geändert");return}
+  try{
+    for(const{r,year,tmdb}of todo)for(const d of r.origs)rulesCache=(await api("/api/rules",{detected:d,name:r.name,year,tmdb,category:r.category})).rules;
+    $("mdlg").close();await reloadKeep();toast(`${todo.length} ${todo.length===1?"Serie":"Serien"} aktualisiert`,"ok")
+  }catch(e){$("merr").textContent=e.message;await reloadKeep()}};
+async function saveFolder(folder,msg){
+  try{await api("/api/paths",{items:curFolder.map(f=>f.path),folder});$("fdlg").close();await reloadKeep();toast(msg,"ok")}
+  catch(e){toast(e.message,"bad")}}
+$("freset").onclick=()=>saveFolder("","Standardpfad wiederhergestellt");
+$("fform").onsubmit=ev=>{ev.preventDefault();saveFolder($("fpath").value,"Zielordner gemerkt")};
+let rulesCache=[];
+async function loadRules(){try{rulesCache=(await api("/api/rules")).rules}catch{}}
+function drawRules(){
+  $("rules").innerHTML=rulesCache.length?rulesCache.map((r,i)=>`<div class="rule"><div><b>${esc(r.name)}${r.year?` (${esc(r.year)})`:""}</b>
+    <span class="sub">erkannt als „${esc(r.detected)}“ · ${r.category?ICON[r.category]+" "+r.category:"Kategorie automatisch"}${r.tmdb?` · ${/^tvdb:/.test(r.tmdb)?"tvdbid-"+esc(r.tmdb.slice(5)):"tmdbid-"+esc(r.tmdb)}`:""}</span></div>
+    <button class="danger" data-r="${i}">Entfernen</button></div>`).join(""):'<p class="sub">Noch keine Serien gemerkt.</p>';
+  $("rules").querySelectorAll("button").forEach(b=>b.onclick=async()=>{
+    try{rulesCache=(await api("/api/rules/delete",{key:rulesCache[b.dataset.r].key})).rules;drawRules();toast("Entfernt","ok")}catch(e){toast(e.message,"bad")}})}
+const dupN=()=>files.filter(f=>f.dup&&f.dup.n).length;
+const dupTags=f=>{const d=f.dup;if(!d||!d.n)return"";const ex=d.level==="exakt";
+  return `<div class="dupl"><span class="tag ${ex?"bad":"warn"}">${ex?"🔁 Schon in der Bibliothek":"≈ Ähnliches vorhanden"}</span>`
+    +d.items.map(m=>`<div class="dupm"><code>${esc(m.path)}</code> <span class="sub">${fmt(m.size)}${m.level!=="exakt"?" · ähnlich":""}</span></div>`).join("")
+    +(d.n>d.items.length?`<div class="sub">+ ${d.n-d.items.length} weitere</div>`:"")+`</div>`};
+function tabs(){
+  const u=unclearN(),dn=dupN();
+  if(filter==="Klärung"&&!u)filter="Alle";
+  if(filter==="Doppelt"&&!dn)filter="Alle";
+  const kinds=[...(u?["Klärung"]:[]),...(dn?["Doppelt"]:[])];
+  $("tabs").hidden=!kinds.length;
+  $("tabs").innerHTML=kinds.map(c=>`<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":"Alle"}" data-k="${c}">${c==="Klärung"?"❓ Braucht dich":"🔁 Schon da?"} <i>${c==="Klärung"?u:dn}</i></button>`).join("");
+  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=filter===b.dataset.k?"Alle":b.dataset.k;tabs();render()});
+  stats();seriesBar()}
+let fqs="";
+const hay=f=>(f.path+" "+(f.series?f.series.name+" "+f.series.orig:"")+" "+(f.target||"")).toLowerCase();
+const visible=()=>files.filter(f=>(filter==="Alle"||(filter==="Klärung"?!f.category:filter==="Doppelt"?!!(f.dup&&f.dup.n):f.category===filter))&&(!fqs||fqs.every(w=>hay(f).includes(w))));
+const catOpts=(first)=>`<option value="">${first}</option>`+cats.map(c=>`<option value="${c}">${ICON[c]} ${c}</option>`).join("");
+function row(f,short,extra="",cls=""){const i=files.indexOf(f),name=short&&f.path.includes("/")?f.path.slice(f.path.indexOf("/")+1):f.path;return `<tr class="${cls}" data-cat="${esc(f.category)}">
+   <td class="chk"><input type="checkbox" data-i="${i}" ${checked(f)?"checked":""} aria-label="markieren"></td>
+   <td class="f" title="${esc(f.path)}">${esc(name)}${extra}${dupTags(f)}</td>
+   <td class="c"><select class="cat" data-i="${i}" aria-label="Kategorie">${f.category?"":'<option value="" selected>Kategorie wählen…</option>'}${cats.map(c=>`<option value="${c}" ${c===f.category?"selected":""}>${ICON[c]} ${c}</option>`).join("")}</select></td>
+   <td class="t">${f.category?esc(f.target):'<span class="tag warn">❓ Unklar</span> Wohin gehört das?'}</td><td class="s">${fmt(f.size)}</td></tr>`}
+function refreshGroups(){
+  $("rows").querySelectorAll("input[data-g]").forEach(c=>{const fs=groups[c.dataset.g];
+    c.checked=fs.every(checked);c.indeterminate=fs.some(checked)&&!fs.every(checked)})}
+function render(){
+  const list=visible();
+  if(!emptyHtml)emptyHtml=$("empty").innerHTML;
+  $("empty").innerHTML=!list.length&&fqs?'<div class="big">🔍</div><b>Keine Treffer</b>Für diese Suche passt keine Datei.':emptyHtml;
+  $("fmark").hidden=!fqs||!list.length;$("fqn").textContent=fqs?`${list.length} Treffer`:"";
+  $("empty").hidden=list.length>0;$("rows").classList.toggle("grouped",grouped);
+  let html="";groups=[];sgroups=[];
+  $("rows").classList.toggle("grouped",grouped||sgrouped);
+  if(sgrouped){
+    const g=new Map();list.forEach(f=>{const k=f.series?f.series.key:"";if(!g.has(k))g.set(k,{key:k,names:{},files:[],cats:{},origs:[]});
+      const e=g.get(k);e.files.push(f);if(f.series&&!e.origs.includes(f.series.orig))e.origs.push(f.series.orig);const c=f.category||"?";e.cats[c]=(e.cats[c]||0)+1;if(f.series)e.names[f.series.name]=(e.names[f.series.name]||0)+1});
+    g.forEach(e=>e.gap=e.key&&gaps(e.files).bad.length?1:0);
+    [...g.values()].sort((a,b)=>(a.key===""?1:0)-(b.key===""?1:0)||b.gap-a.gap||Object.keys(a.names)[0]?.localeCompare(Object.keys(b.names)[0]||"")).forEach(e=>{
+      const fs=e.files,gi=groups.push(fs)-1;sgroups[gi]=e;
+      if(fs.length===1){html+=row(fs[0],false,e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>${gapHtml(fs)}`:"",`solo${e.gap?" hasgap":""}`);return}
+      const nm=Object.entries(e.names).sort((a,b)=>b[1]-a[1])[0];
+      const summ=Object.entries(e.cats).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
+      const open=sopen.has(e.key)||!!fqs,dir=commonFolder(fs);
+      html+=`<tr class="grow sg${e.gap?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Serie markieren"></td>
+        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Folgen ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📺 <b>${nm?esc(nm[0]):"Ohne erkannte Serie"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span>
+        ${e.key?`<button class="rn" data-sg="${gi}">✎ Umbenennen</button><button class="rn" data-fg="${gi}">📂 Zielordner</button>`:""}${new Set(fs.map(f=>f.series&&f.series.rkey).filter(Boolean)).size>1?`<button class="rn" data-split="${gi}" title="Zusammenlegung aufheben">✂️ Aufteilen</button>`:""}${e.origs&&e.origs.length>1?`<div class="gap ghost">🔗 vereint aus ${e.origs.map(x=>esc(x)).join(", ")}</div>`:""}<div style="margin-top:4px">${summ}</div>${e.key?gapHtml(fs):""}</td>
+        <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
+        +(open?fs.map(f=>row(f,false)).join(""):"")})
+  }else if(grouped){
+    const g=new Map();list.forEach(f=>{const k=f.path.includes("/")?f.path.split("/")[0]:"";if(!g.has(k))g.set(k,[]);g.get(k).push(f)});
+    [...g.keys()].sort((a,b)=>(a===""?1:0)-(b===""?1:0)||a.localeCompare(b)).forEach(k=>{
+      const fs=g.get(k),gi=groups.push(fs)-1,cnt={},key="d:"+k,open=sopen.has(key)||!!fqs;sgroups[gi]={key};
+      if(fs.length===1){const gp=fs[0].series?gaps(fs).bad.length:0;html+=row(fs[0],false,fs[0].series?gapHtml(fs):"",`solo${gp?" hasgap":""}`);return}
+      const sks=new Set(fs.map(f=>f.series?f.series.key:"")),one=sks.size===1&&!sks.has("");
+      fs.forEach(f=>{const c=f.category||"?";cnt[c]=(cnt[c]||0)+1});
+      const summ=Object.entries(cnt).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
+      html+=`<tr class="grow fg${one&&gaps(fs).bad.length?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Ordner markieren"></td>
+        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Dateien ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📁 <b>${k?esc(k):"Lose Dateien"}</b> <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div>${one?gapHtml(fs):""}</td>
+        <td class="c"><select data-g="${gi}" aria-label="Ganzen Ordner zuordnen">${catOpts("Ordner zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
+        +(open?fs.map(f=>row(f,true)).join(""):"")})
+  }else html=list.map(f=>row(f)).join("");
+  $("rows").innerHTML=html;
+  $("rows").querySelectorAll("input[data-i]").forEach(c=>c.onchange=()=>{files[c.dataset.i].sel=c.checked;count();refreshGroups()});
+  const rangeSel=(sel,last)=>$("rows").querySelectorAll(sel).forEach(c=>c.addEventListener("click",ev=>{
+    const all=[...$("rows").querySelectorAll(sel)],i=all.indexOf(c),j=last.v;
+    if(ev.shiftKey&&j!==null&&j!==i&&all[j]){const [a,b]=[Math.min(i,j),Math.max(i,j)];
+      all.slice(a,b+1).forEach(x=>{(sel==="input[data-i]"?[files[x.dataset.i]]:groups[x.dataset.g]).forEach(f=>f.sel=c.checked)});
+      last.v=i;setTimeout(render,0);return}
+    last.v=i}));
+  rangeSel("input[data-i]",lastRow);rangeSel("input[data-g]",lastGrp);
+  $("rows").querySelectorAll("input[data-g]").forEach(c=>c.onchange=()=>{groups[c.dataset.g].forEach(f=>f.sel=c.checked);render()});
+  $("rows").querySelectorAll("select[data-i]").forEach(s=>s.onchange=()=>assign([files[s.dataset.i]],s.value));
+  $("rows").querySelectorAll("select[data-g]").forEach(s=>s.onchange=()=>assign(groups[s.dataset.g],s.value));
+  $("rows").querySelectorAll("button[data-sg]").forEach(b=>b.onclick=()=>openSeries(sgroups[b.dataset.sg]));
+  $("rows").querySelectorAll("button[data-split]").forEach(b=>b.onclick=()=>splitSeries(groups[b.dataset.split]));
+  $("rows").querySelectorAll("button[data-fg]").forEach(b=>b.onclick=()=>openFolder(groups[b.dataset.fg]));
+  $("rows").querySelectorAll("tr[data-tg]").forEach(t=>t.onclick=ev=>{
+    if(ev.target.closest("input,select,button:not(.cv)"))return;
+    const k=sgroups[t.dataset.tg].key;sopen.has(k)?sopen.delete(k):sopen.add(k);render()});
+  refreshGroups();count()}
+async function assign(list,cat){
+  if(!cat||!list.length){render();return}
+  const changed=list.filter(f=>f.category&&f.category!==cat).length;
+  if(changed&&!confirm(`${changed} Datei(en) haben schon eine andere Kategorie und werden auf „${cat}“ umgestellt. Fortfahren?`)){render();return}
+  try{
+    const r=await api("/api/preview/batch",{items:list.map(f=>({path:f.path,category:cat}))});
+    list.forEach((f,i)=>{f.category=cat;f.sel=true;f.target=r.targets[i]});
+    toast(`${list.length} Datei(en) zugeordnet: ${ICON[cat]} ${cat}`,"ok")
+  }catch(e){toast(e.message,"bad")}
+  tabs();render()}
+const selected=()=>files.filter(f=>f.category&&f.sel===true);
+function updateGo(){const s=selected();
+  $("go").disabled=!s.length;
+  $("go").textContent=s.length?`${running?"➕ einreihen":"▶ kopieren"}: ${s.length} ${s.length===1?"Datei":"Dateien"} (${fmt(s.reduce((a,f)=>a+f.size,0))})`:"Nichts ausgewählt"}
+function mergeCandidates(){const m=new Map();files.filter(checked).forEach(f=>{if(f.series)m.set(f.series.key,(m.get(f.series.key)||[]).concat(f))});return m}
+$("merge").onclick=()=>{const m=mergeCandidates(),fs=[...m.values()].flat(),names={},cats={};
+  fs.forEach(f=>{names[f.series.name]=(names[f.series.name]||0)+1;const c=f.category||"?";cats[c]=(cats[c]||0)+1});
+  openSeries({key:"",names,files:fs,cats})};
+function count(){const mc=mergeCandidates().size;$("merge").hidden=mc<2;$("mbtn").hidden=!mc;const m=files.filter(checked),u=unclearN(),un=m.filter(f=>!f.category).length;
+  $("sel").textContent=`${m.length} markiert`+(u?`, ${u} ohne Kategorie`:"");
+  $("bulk").hidden=!m.length;$("bn").textContent=`${m.length} markierte zuordnen als`+(un?` (davon ${un} unklar)`:"");
+  updateGo()}
+$("reload").onclick=loadFiles;
+$("shc").onclick=()=>{showCopied=!showCopied;loadFiles()};
+$("all").onclick=()=>{visible().forEach(f=>f.sel=true);render()};
+$("none").onclick=()=>{visible().forEach(f=>f.sel=false);render()};
+$("inv").onclick=()=>{visible().forEach(f=>f.sel=!f.sel);render()};
+let fqt;$("fq").addEventListener("input",()=>{clearTimeout(fqt);fqt=setTimeout(()=>{fqs=$("fq").value.toLowerCase().split(/\s+/).filter(Boolean);if(!fqs.length)fqs="";render()},150)});
+$("fmark").onclick=()=>{visible().forEach(f=>f.sel=true);render();toast(`${visible().length} Treffer markiert`,"ok")};
+document.addEventListener("keydown",e=>{
+  if(view!=="sort"||dlgOpen()||e.target.closest("input,select,textarea"))return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="a"){e.preventDefault();visible().forEach(f=>f.sel=true);render()}});
+$("master").onchange=e=>{visible().forEach(f=>f.sel=e.target.checked);render()};
+function setGroup(){try{localStorage.setItem("sort_grp",grouped?"1":"0");localStorage.setItem("sort_sgrp",sgrouped?"1":"0")}catch{}
+  $("grp").classList.toggle("on",grouped);$("sgrp").classList.toggle("on",sgrouped);render()}
+$("grp").onclick=()=>{grouped=!grouped;if(grouped)sgrouped=false;setGroup()};
+$("sgrp").onclick=()=>{sgrouped=!sgrouped;if(sgrouped)grouped=false;setGroup()};
+$("go").onclick=async()=>{
+  try{const r=await api("/api/start",{items:selected().map(f=>({path:f.path,category:f.category}))});$("err").textContent="";toast(r.queued?`In die Warteschlange gestellt (Platz ${r.position})`:"Kopieren gestartet","ok");poll();reloadKeep()}
+  catch(e){$("err").textContent=e.message}};
+$("stop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
+
+/* Neue Gruppe aus Markierten (Rechtsklick oder Knopf) */
+let gFiles=[],gtm;
+function openGroup(list){
+  list=list.filter(Boolean);
+  if(!list.length){toast("Erst Dateien markieren.","bad");return}
+  gFiles=list;
+  const cnt={},cats={};list.forEach(f=>{if(f.series){cnt[f.series.name]=(cnt[f.series.name]||0)+1}if(f.category)cats[f.category]=(cats[f.category]||0)+1});
+  const top=m=>Object.entries(m).sort((a,b)=>b[1]-a[1]).map(e=>e[0])[0]||"";
+  const pre=list.map(f=>f.path.split("/").pop().replace(/\.[^.]+$/,"").replace(/[._]+/g," ")).reduce((a,b)=>{let i=0;while(i<a.length&&i<b.length&&a[i].toLowerCase()===b[i].toLowerCase())i++;return a.slice(0,i)}).replace(/[\s\-\d(\[]+$/,"").trim();
+  $("gname").value=top(cnt)||(pre.length>=3?pre:"");
+  const y=list.find(f=>f.series&&f.series.year);$("gyear").value=y?y.series.year:"";$("gtmdb").value="";
+  const serc=["Serien","Anime","Dokus"],cur=serc.includes(top(cats))?top(cats):"Serien";
+  $("gcat").innerHTML=serc.map(c=>`<option value="${c}" ${c===cur?"selected":""}>${ICON[c]} ${c}</option>`).join("");
+  const sn={};list.forEach(f=>{if(f.series)sn[f.series.season]=(sn[f.series.season]||0)+1});$("gseason").value=top(sn)||1;
+  $("gmode").value=list.every(f=>f.series)?"keep":"renumber";$("gstart").value=1;
+  $("gdet").textContent=`${list.length} Datei(en) werden zu einer Serie zusammengefasst.`;
+  $("gdlg").showModal();gprev();$("gname").focus();$("gname").select()}
+const gBody=()=>({items:gFiles.map(f=>f.path),name:$("gname").value,year:$("gyear").value,tmdb:$("gtmdb").value,category:$("gcat").value,season:$("gseason").value,mode:$("gmode").value,start:$("gstart").value});
+async function gprev(){
+  $("gstart").disabled=$("gmode").value!=="renumber";
+  const body=gBody();
+  try{const r=await api("/api/groups/preview",body);if(JSON.stringify(body)!==JSON.stringify(gBody()))return;
+    const order=[...new Set(body.items)].sort((a,b)=>0),n=gFiles.length;
+    $("gcount").innerHTML=`<b>${n} Datei(en)</b> werden so abgelegt:`;
+    $("gprev").innerHTML=r.targets.slice(0,300).map((t,i)=>`<div>${esc(body.items[i]||"")}<small>→ ${esc(t)}</small></div>`).join("")+(r.targets.length>300?`<div>… und ${r.targets.length-300} weitere</div>`:"")}
+  catch(e){$("gcount").textContent=e.message;$("gprev").innerHTML=""}}
+["gname","gyear","gtmdb","gseason","gstart"].forEach(id=>$(id).addEventListener("input",()=>{clearTimeout(gtm);gtm=setTimeout(gprev,250)}));
+["gcat","gmode"].forEach(id=>$(id).addEventListener("change",gprev));
+$("gcancel").onclick=()=>$("gdlg").close();
+$("gform").onsubmit=async ev=>{ev.preventDefault();
+  try{const r=await api("/api/groups",gBody());$("gdlg").close();await reloadKeep();toast(`Gruppe mit ${r.n} Datei(en) angelegt`,"ok")}
+  catch(e){toast(e.message,"bad")}};
+async function dissolveGroup(list){
+  const fs=list.filter(f=>f.series&&f.series.manual);
+  if(!fs.length){toast("In der Auswahl ist keine eigene Gruppe.","bad");return}
+  if(!confirm(`${fs.length} Datei(en) aus ihrer eigenen Gruppe lösen? Sie bekommen wieder den erkannten Namen.`))return;
+  try{await api("/api/groups/delete",{items:fs.map(f=>f.path)});await reloadKeep();toast("Gruppe aufgelöst","ok")}catch(e){toast(e.message,"bad")}}
+$("gbtn").onclick=()=>openGroup(visible().filter(checked));
+async function deleteFiles(list){
+  list=list.filter(Boolean);if(!list.length){toast("Erst Dateien markieren.","bad");return}
+  const names=list.slice(0,8).map(f=>"• "+f.path).join("\n")+(list.length>8?`\n… und ${list.length-8} weitere`:"");
+  if(!confirm(`${list.length} Datei(en) (${fmt(list.reduce((a,f)=>a+f.size,0))}) aus dem Quellordner endgültig löschen?\n\n${names}\n\nDas lässt sich nicht rückgängig machen.`))return;
+  try{const r=await api("/api/files/delete",{items:list.map(f=>f.path)});await reloadKeep();
+    toast(`${r.deleted} Datei(en) gelöscht`+(r.skipped?`, ${r.skipped} übersprungen (laufen gerade)`:"")+(r.errors.length?`, ${r.errors.length} Fehler`:""),r.errors.length?"bad":"ok");
+    if(r.errors.length)$("err").textContent=r.errors.join("\n")}
+  catch(e){toast(e.message,"bad")}}
+$("dbtn").onclick=()=>deleteFiles(visible().filter(checked));
+
+/* Rechtsklick: Ziel bearbeiten (öffnet den Zielordner-Dialog mit dem vorhandenen Pfad) */
+let ctxList=null,ctxAt=0,ctxGrp=[];
+const hideCtx=()=>{$("ctx").hidden=true};
+$("rows").addEventListener("contextmenu",ev=>{
+  if(ev.target.closest("input,select"))return;
+  const tr=ev.target.closest("tr");if(!tr)return;let list=null;
+  if(tr.classList.contains("grow")){const cb=tr.querySelector("input[data-g]");list=cb&&groups[cb.dataset.g]}
+  else{const cb=tr.querySelector("input[data-i]");list=cb&&[files[cb.dataset.i]]}
+  if(!list)return;
+  ev.preventDefault();ctxList=list;ctxAt=Date.now();
+  const marked=visible().filter(checked),base=marked.length?marked:list;ctxGrp=base;
+  $("ctxgrp").textContent=`👥 Neue Gruppe${marked.length?` aus ${marked.length} Markierten`:" aus diesen "+list.length}`;
+  $("ctxdis").hidden=!base.some(f=>f.series&&f.series.manual);
+  $("ctxdel").textContent=`🗑️ Löschen (${base.length})`;
+  $("ctxedit").hidden=!list.some(f=>f.category&&f.target);
+  const m=$("ctx");m.hidden=false;m.style.left=Math.max(4,Math.min(ev.clientX,innerWidth-m.offsetWidth-8))+"px";m.style.top=Math.max(4,Math.min(ev.clientY,innerHeight-m.offsetHeight-8))+"px"});
+$("ctxgrp").onclick=()=>{hideCtx();openGroup(ctxGrp)};
+$("ctxdel").onclick=()=>{hideCtx();deleteFiles(ctxGrp)};
+$("ctxdis").onclick=()=>{hideCtx();dissolveGroup(ctxGrp)};
+$("ctxedit").onclick=()=>{hideCtx();if(ctxList)openFolder(ctxList.filter(f=>f.category&&f.target))};
+document.addEventListener("click",hideCtx);document.addEventListener("keydown",e=>{if(e.key==="Escape")hideCtx()});
+window.addEventListener("scroll",()=>{if(Date.now()-ctxAt>500)hideCtx()},true);
+
+/* Verlauf */
+async function loadHist(){hist=(await api("/api/history")).items;setBadge("nh",hist.length);$("st-hist").textContent=hist.length;renderHist()}
+function renderHist(){
+  const q=$("hq").value.toLowerCase();
+  const list=hist.map((h,i)=>({h,i})).filter(({h})=>!q||(h.full+" "+h.cat).toLowerCase().includes(q));
+  $("hempty").hidden=list.length>0;
+  $("hrows").innerHTML=list.map(({h,i})=>`<tr data-cat="${esc(h.cat)}"><td class="s">${fdate(h.t)}</td><td><span class="tag cat">${ICON[h.cat]||"📁"} ${esc(h.cat)}</span></td>
+   <td class="span"><div class="path">${esc(h.full)}</div>${h.status!=="verschoben"?`<div class="t">${esc(h.status)}</div>`:""}</td>
+   <td class="s">${fmt(h.size)}</td><td><button data-i="${i}">📋 Pfad kopieren</button></td></tr>`).join("");
+  $("hrows").querySelectorAll("button").forEach(b=>b.onclick=()=>copyText(hist[b.dataset.i].full,b))}
+$("hq").oninput=renderHist;
+$("hclear").onclick=async()=>{if(confirm("Verlauf wirklich leeren? Die Dateien selbst bleiben unberührt.")){await api("/api/history/clear",{});toast("Verlauf geleert","ok");loadHist()}};
+
+/* Aufräumen */
+let dirs=[];
+async function loadClean(){dirs=(await api("/api/leftovers")).dirs;setBadge("nc",dirs.length);
+  $("cempty2").hidden=dirs.length>0;$("cdelall").disabled=!dirs.some(d=>!d.locked);$("cwipe").disabled=!dirs.length;
+  $("crows").innerHTML=dirs.map((d,i)=>`<tr><td class="f span">${d.type==="dir"?"📁":"📄"} ${esc(d.path)}</td>
+   <td class="t span">${d.type==="dir"?d.files+" Datei(en), ":""}${fmt(d.size)}${d.sample.length?"<br>"+d.sample.map(esc).join(", "):""}${d.archives?"<br>enthält Archive, evtl. noch nicht entpackt":""}</td>
+   <td>${d.locked?`<span class="tag warn">🔒 ${esc(d.locked)}</span>`:'<span class="tag ok">löschbar</span>'}</td>
+   <td><button class="danger" data-i="${i}">${d.locked?"Trotzdem löschen":"Löschen"}</button></td></tr>`).join("");
+  $("crows").querySelectorAll("button").forEach(b=>b.onclick=()=>delDir(dirs[b.dataset.i]))}
+function report(r,what){if(r.errors&&r.errors.length)toast(r.errors.join("\n"),"bad");else toast(what,"ok")}
+async function delDir(d){
+  const msg=d.locked
+    ?`ACHTUNG: "${d.path}" ist gesperrt (${d.locked}${d.media?", "+d.media+" Mediendatei(en)":""}).\nTrotzdem endgültig löschen (${fmt(d.size)})? Das kann nicht rückgängig gemacht werden.`
+    :`"${d.path}" (${fmt(d.size)}) endgültig löschen?`;
+  if(!confirm(msg))return;
+  try{report(await api("/api/leftovers/delete",{paths:[d.path],force:!!d.locked}),"Gelöscht")}catch(e){toast(e.message,"bad")}
+  loadClean()}
+$("cdelall").onclick=async()=>{
+  const n=dirs.filter(d=>!d.locked).length;
+  if(!confirm(`${n} Einträge endgültig löschen?`))return;
+  try{report(await api("/api/leftovers/delete",{all:true}),`${n} Einträge gelöscht`)}catch(e){toast(e.message,"bad")}
+  loadClean()};
+$("cwipe").onclick=async()=>{
+  const sz=dirs.reduce((a,d)=>a+d.size,0);
+  const t=prompt(`Alle ${dirs.length} Einträge (${fmt(sz)}) in der Quelle endgültig löschen, auch Medien und laufende Downloads?\nZur Bestätigung LÖSCHEN eingeben:`);
+  if(t!=="LÖSCHEN")return;
+  try{report(await api("/api/leftovers/delete",{all:true,force:true}),"Alles gelöscht")}catch(e){toast(e.message,"bad")}
+  loadClean()};
+$("cempty").onclick=async()=>{try{const r=await api("/api/leftovers/empty",{});toast(`${r.deleted} leere Ordner entfernt`,"ok")}catch(e){toast(e.message,"bad")}loadClean()};
+$("creload").onclick=loadClean;
+
+/* Analyse */
+let ascope="target",ares=null,ashow=100,afilter="Alle",anaWas=false,atimer,P={h264:40,old:60};
+try{const q=JSON.parse(localStorage.getItem("ana_p")||"null");if(q&&q.h264&&q.old)P=q}catch{}
+const OLDC=new Set(["MPEG-1","MPEG-2","MPEG-4","VC-1","WMV","Theora","VP8"]);
+const CCOL={"H.264":"var(--c-Filme)","H.265":"var(--c-Dokus)","AV1":"var(--c-Serien)","VP9":"var(--muted)","MPEG-4":"var(--c-Anime)","MPEG-2":"var(--c-)","VC-1":"var(--c-)","WMV":"var(--c-)"};
+const ccol=c=>CCOL[c]||"var(--muted)";
+const rate=c=>c==="H.264"?P.h264:OLDC.has(c)?P.old:c==="VP9"?15:0;
+const saving=f=>f.s*rate(f.codec)/100;
+function drawProg(st){
+  $("aprog").hidden=!st.running;$("astop").hidden=!st.running;$("astart").disabled=st.running||!$("anoff").hidden;
+  const pct=st.total?Math.min(100,st.done/st.total*100):0;
+  $("apb").style.width=pct+"%";$("apct").textContent=pct.toFixed(0)+" %";
+  $("atxt").textContent=`${st.done} von ${st.total} Dateien${st.current?": "+st.current:""}`;
+  $("aerr").hidden=!st.error;$("aerr").textContent=st.error?"⚠️ "+st.error:""}
+async function loadAna(){
+  const st=await api("/api/analysis/status");
+  if(st.running)ascope=st.scope;
+  $("anoff").hidden=st.ffprobe;
+  $("ascope").innerHTML=[["target","📦 Ziel (NFS)"],["source","📥 Quelle"]].map(([k,l])=>
+    `<button class="chip ${k===ascope?"on":""}" data-c="Alle" data-s="${k}" title="${esc(st.roots[k])}">${l}</button>`).join("");
+  $("ascope").querySelectorAll("button").forEach(b=>b.onclick=()=>{ascope=b.dataset.s;ashow=100;afilter="Alle";loadAna()});
+  drawProg(st);if(st.running){anaWas=true;anaPoll()}
+  $("p264").value=P.h264;$("pold").value=P.old;
+  const r=await api("/api/analysis/results?scope="+ascope);ares=r;
+  $("ameta").textContent=r.ts?`Stand ${fdate(r.ts)}, ${r.root}`:r.root;
+  renderAna()}
+function anaPoll(){clearTimeout(atimer);atimer=setTimeout(async()=>{
+  if(view!=="ana")return;
+  try{const st=await api("/api/analysis/status");drawProg(st);
+    if(st.running){anaWas=true;anaPoll()}
+    else if(anaWas){anaWas=false;toast(st.error?"Analyse fehlgeschlagen":"Analyse fertig",st.error?"bad":"ok");loadAna()}}catch{anaPoll()}},1000)}
+function renderAna(){
+  const items=ares?ares.items:[],has=items.length>0;
+  $("aempty").hidden=has;$("abody").hidden=!has;
+  if(!has){const none=!!(ares&&ares.ts);$("aet").textContent=none?"Keine Videodateien gefunden":"Noch keine Analyse";
+    $("aes").textContent=none?"In diesem Ordner liegen keine Videos.":"Starte die Analyse, um die Codecs zu sehen.";return}
+  const tot=items.reduce((a,f)=>a+f.s,0),sav=items.reduce((a,f)=>a+saving(f),0);
+  $("a-n").textContent=items.length;$("a-size").textContent=fmt(tot);
+  $("a-sav").textContent="≈ "+fmt(sav);$("a-pct").textContent=tot?`${(sav/tot*100).toFixed(0)} % deiner Videos, wenn alles H.265 wäre`:"";
+  const g={};items.forEach(f=>{const x=g[f.codec]||(g[f.codec]={n:0,s:0,v:0});x.n++;x.s+=f.s;x.v+=saving(f)});
+  const codecs=Object.entries(g).sort((a,b)=>b[1].s-a[1].s);
+  $("sbar").innerHTML=codecs.map(([c,v])=>`<i style="width:${v.s/tot*100}%;background:${ccol(c)}" title="${esc(c)}: ${fmt(v.s)}"></i>`).join("");
+  $("clist").innerHTML=codecs.map(([c,v])=>`<div class="crow"><span class="tag cat" style="--cc:${ccol(c)}">${esc(c)}</span><span>${v.n} Datei(en)</span>
+    <span>${fmt(v.s)} <small class="sub">(${(v.s/tot*100).toFixed(0)} %)</small></span><b class="${v.v?"okc":"sub"}">${v.v?"−"+fmt(v.v):"–"}</b></div>`).join("");
+  $("v264").textContent=P.h264+" %";$("vold").textContent=P.old+" %";
+  if(afilter!=="Alle"&&!g[afilter])afilter="Alle";
+  $("afilter").innerHTML=["Alle",...codecs.map(c=>c[0])].map(c=>`<button class="chip ${c===afilter?"on":""}" data-c="Alle" data-f="${esc(c)}" style="--cc:${c==="Alle"?"var(--brand)":ccol(c)}">${esc(c)} <i>${c==="Alle"?items.length:g[c].n}</i></button>`).join("");
+  $("afilter").querySelectorAll("button").forEach(b=>b.onclick=()=>{afilter=b.dataset.f;ashow=100;renderAna()});
+  const q=$("aq").value.toLowerCase();
+  const list=items.filter(f=>(afilter==="Alle"||f.codec===afilter)&&(!q||f.path.toLowerCase().includes(q)))
+    .sort((a,b)=>saving(b)-saving(a)||b.s-a.s);
+  $("anone").hidden=list.length>0;$("amore").hidden=list.length<=ashow;$("amore").textContent=`Mehr anzeigen (${list.length-ashow} weitere)`;
+  $("arows").innerHTML=list.slice(0,ashow).map(f=>{const sv=saving(f);
+    const info=[f.w&&f.h?`${f.w}×${f.h}`:"",f.br?(f.br/1e6).toFixed(1)+" Mb/s":"",/10/.test(f.pix||"")?"10-bit":""].filter(Boolean).join(", ")||"–";
+    return `<tr style="--cc:${ccol(f.codec)}"><td class="f span">${esc(f.path)}</td><td><span class="tag cat" style="--cc:${ccol(f.codec)}">${esc(f.codec)}</span></td>
+    <td class="t">${esc(info)}</td><td class="s">${fmt(f.s)}</td><td class="s ${sv?"okc":""}">${sv?"−"+fmt(sv):"–"}</td></tr>`}).join("")}
+$("aq").oninput=()=>{ashow=100;renderAna()};
+$("amore").onclick=()=>{ashow+=200;renderAna()};
+function setP(){P={h264:+$("p264").value,old:+$("pold").value};try{localStorage.setItem("ana_p",JSON.stringify(P))}catch{}renderAna()}
+$("p264").oninput=setP;$("pold").oninput=setP;
+$("astart").onclick=async()=>{try{await api("/api/analysis/start",{scope:ascope});anaWas=true;toast("Analyse gestartet","ok");drawProg(await api("/api/analysis/status"));anaPoll()}catch(e){toast(e.message,"bad")}};
+$("astop").onclick=()=>api("/api/analysis/cancel",{}).then(()=>toast("Wird abgebrochen…"));
+$("acsv").onclick=()=>{if(!ares)return;
+  const rows=[["Datei","Codec","Breite","Hoehe","Bitrate_bps","Groesse_Bytes","Geschaetzte_Ersparnis_Bytes"],...ares.items.map(f=>[f.path,f.codec,f.w,f.h,f.br,f.s,Math.round(saving(f))])];
+  const csv="﻿"+rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(";")).join("\r\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=`codec-analyse-${ascope}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+
+/* Zeitplan + Einstellungen */
+const PRESETS=[["Alle 15 Min","*/15 * * * *"],["Stündlich","0 * * * *"],["Alle 6 Std","0 */6 * * *"],["Täglich 03:00","0 3 * * *"],["Täglich 06:00","0 6 * * *"],["Sonntags 04:00","0 4 * * 0"]];
+function drawPresets(){const v=$("cron").value.trim().replace(/\s+/g," ");
+  $("presets").innerHTML=PRESETS.map(([n,e])=>`<button class="chip ${v===e?"on":""}" data-c="Alle" data-e="${e}">${n}</button>`).join("");
+  $("presets").querySelectorAll("button").forEach(b=>b.onclick=()=>{$("cron").value=b.dataset.e;$("cron").oninput()})}
+function lastInfo(s){$("last").textContent=s.last_run?`${fdate(s.last_run)}: ${s.last_result}`:"Noch kein Lauf."}
+function nextList(n,err){$("cerr").textContent=err||"";$("next").innerHTML=n.map(x=>`<li>${esc(x)}</li>`).join("")}
+function tokHint(set){$("tgtok").value="";$("tgtok").placeholder=set?"Token gespeichert (leer lassen zum Behalten)":"Bot-Token (123456:ABC…)"}
+function fillSettings(s){
+  $("en").checked=s.enabled;$("cron").value=s.cron;$("mv").checked=s.move_after;$("cu").checked=s.cleanup_after;$("jf").checked=s.jellyfin!==false;$("exauto").checked=s.extract_auto!==false;$("exdel").checked=s.extract_delete!==false;$("jfs").checked=!!s.jf_scan;$("jfmode").value=s.jf_mode||"partial";$("jfroot").value=s.jf_root||"";$("jfroot").placeholder="Zielordner aus Sicht von Jellyfin (leer = "+s.info.target+")";$("jfurl").value=s.jf_url||"";$("jfkey").value="";
+  $("jfkey").placeholder=s.jf_key_set?"API-Key gespeichert (leer lassen zum Behalten)":"API-Key (Jellyfin → Dashboard → API-Schlüssel)";$("jfmsg").textContent=s.jf_last?"Zuletzt: "+s.jf_last:"";
+  $("tge").checked=s.tg_enabled;$("puburl").value=s.public_url||"";$("tgchat").value=s.tg_chat;$("tgs").checked=s.tg_start;$("tgd").checked=s.tg_done;$("tgu").checked=s.tg_unclear;
+  $("tgn").checked=s.tg_new;$("tgp").checked=s.tg_progress;$("tgr").checked=s.tg_errors;$("tgq").checked=s.tg_silent;
+  tokHint(s.tg_token_set);drawPresets();
+  $("tz").textContent=s.tz;$("nop").hidden=$("nop2").hidden=s.persist;nextList(s.next,s.error);lastInfo(s);
+  for(const id of["saved","saved2","tgmsg"])$(id).textContent="";
+  const i=s.info,kv=(k,v,h)=>`<div class="kv"><span class="sub">${k}</span><span>${v}${h?`<br><small class="sub">${h}</small>`:""}</span></div>`;
+  $("sysinfo").innerHTML=kv("Quelle",`<code>${esc(i.source)}</code>`)+kv("Ziel (NFS)",`<code>${esc(i.target)}</code>`)
+    +kv("Einstellungen",`<code>${esc(i.data)}</code>`,s.persist?"werden dauerhaft gespeichert":"nicht dauerhaft, Volume fehlt")
+    +kv("Zeitzone",esc(s.tz))+kv("Mindestalter",`${i.min_age} s`,"Jüngere Dateien ignoriert der Zeitplan, weil sie evtl. noch geschrieben werden")
+    +kv("Neue Dateien prüfen",`alle ${i.watch} s`,"Telegram meldet sie, sobald sich zwei Prüfungen in Folge nicht mehr ändern")
+    +kv("Login",i.auth?"aktiv":"aus","AUTH_USER und AUTH_PASS in der docker-compose.yml")+kv("Codec-Analyse",i.ffprobe?"ffprobe vorhanden":"ffprobe fehlt")}
+async function loadSched(){fillSettings(await api("/api/settings"));await loadRules();drawRules();loadMeta();loadUpd()}
+let pt;$("cron").oninput=()=>{drawPresets();clearTimeout(pt);pt=setTimeout(async()=>{
+  const r=await api("/api/cron?expr="+encodeURIComponent($("cron").value));nextList(r.next||[],r.error)},300)};
+const collect=()=>({enabled:$("en").checked,cron:$("cron").value,move_after:$("mv").checked,cleanup_after:$("cu").checked,jellyfin:$("jf").checked,jf_scan:$("jfs").checked,jf_url:$("jfurl").value,jf_key:$("jfkey").value,jf_mode:$("jfmode").value,jf_root:$("jfroot").value,
+  tg_enabled:$("tge").checked,tg_token:$("tgtok").value,tg_chat:$("tgchat").value,tg_start:$("tgs").checked,tg_done:$("tgd").checked,tg_unclear:$("tgu").checked,
+  tg_new:$("tgn").checked,tg_progress:$("tgp").checked,tg_errors:$("tgr").checked,tg_silent:$("tgq").checked,public_url:$("puburl").value});
+async function saveAll(out){for(const id of["saved","saved2","tgmsg"])$(id).textContent="";try{
+  const s=await api("/api/settings",collect());nextList(s.next,s.error);tokHint(s.tg_token_set);toast("Gespeichert","ok");poll()}
+  catch(e){out.textContent=e.message;toast(e.message,"bad")}}
+$("save").onclick=()=>saveAll($("saved"));$("save2").onclick=()=>saveAll($("saved2"));$("tgsave").onclick=()=>saveAll($("tgmsg"));
+async function sendTest(urgent){$("tgmsg").textContent="Sende…";
+  try{await api("/api/telegram/test",{token:$("tgtok").value,chat:$("tgchat").value,urgent});$("tgmsg").textContent="";toast(urgent?"Dringender Test gesendet":"Test gesendet","ok")}
+  catch(e){$("tgmsg").textContent="";toast("Telegram: "+e.message,"bad")}}
+$("jftest").onclick=async()=>{$("jfmsg").textContent="…";try{const r=await api("/api/jellyfin/test",{url:$("jfurl").value,key:$("jfkey").value});
+  $("jfmsg").textContent=(r.ok?"✅ ":"⛔ ")+r.msg}catch(e){$("jfmsg").textContent="⛔ "+e.message}};
+$("tgtest").onclick=()=>sendTest(false);$("tgtest2").onclick=()=>sendTest(true);
+$("runnow").onclick=async()=>{try{const r=await api("/api/run",{});$("runmsg").textContent=r.info;poll()}catch(e){$("runmsg").textContent=e.message}};
+
+/* Läuft */
+const hms=sec=>{sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return h?`${h} Std ${m} Min`:m?`${m} Min ${s} s`:`${s} s`};
+const QST={kopiert:["▶️","kopiert"],wartet:["⏳","wartet"],fertig:["✅","fertig"],vorhanden:["✅","schon da"],fehler:["⛔","Fehler"],abgebrochen:["⏹️","abgebrochen"]};
+async function renderRun(s){
+  const pct=s.total?Math.min(100,s.done/s.total*100):0,act=s.running,has=act||s.finished;
+  $("rtitle").textContent=act?"⚡ Kopiert gerade":s.finished?(s.errors.length?"⚠️ Zuletzt: fertig mit Fehlern":"✅ Zuletzt: fertig"):"💤 Gerade läuft nichts";
+  $("rsub").textContent=has?`${s.source||""} · ${s.files_total} Datei(en)`+(s.elapsed?` · Dauer ${hms(s.elapsed)}`:""):"";
+  $("rpct").hidden=!has;$("rpct").textContent=pct.toFixed(0)+" %";
+  $("ractive").hidden=!has;$("ridle").hidden=has;$("rstop").hidden=!act;
+  $("rbar").classList.toggle("run",act);$("rbi").style.width=pct+"%";
+  $("rfiles").textContent=`${s.files_done} / ${s.files_total}`;$("rdata").textContent=`${fmt(s.done)} / ${fmt(s.total)}`;
+  const avg=s.elapsed>2?s.done/s.elapsed:0;
+  $("rspd").textContent=act&&s.speed?fmt(s.speed)+"/s":"–";
+  $("reta").textContent=act&&avg?hms((s.total-s.done)/avg):act?"…":"–";
+  $("rcur").hidden=!act||!s.current;$("rcn").textContent=s.current||"";
+  $("rcp").textContent=s.current_size?`${fmt(s.current_done)} / ${fmt(s.current_size)}`:"";
+  $("rcb").style.width=(s.current_size?s.current_done/s.current_size*100:0)+"%";
+  const w=s.waiting||[];$("rwaitcard").hidden=!w.length;
+  if(w.length){$("rwaitsub").textContent=`${w.length} ${w.length===1?"Auftrag wartet":"Aufträge warten"} auf den laufenden Vorgang`;
+    $("rwait").innerHTML=w.map((b,i)=>`<div class="rule"><div><b>${i+1}. ${esc(b.source)}</b><span class="sub">${b.files} Datei(en) · ${fmt(b.size)}</span></div><button data-q="${b.id}">✖ Entfernen</button></div>`).join("");
+    $("rwait").querySelectorAll("button").forEach(x=>x.onclick=async()=>{await api("/api/queue/remove",{id:+x.dataset.q});toast("Aus der Warteschlange entfernt");poll()})}
+  const sc=s.schedule;
+  $("ridle-txt").innerHTML=(sc.last?`Letzter Lauf: ${esc(sc.last)}<br>`:"")+(sc.enabled?`⏰ Nächster Zeitplan-Lauf: <b>${esc(sc.next||"–")}</b>`:"⏰ Zeitplan ist aus, es läuft nur manuell.");
+  $("rqwrap").hidden=!has;
+  if(has){try{
+    const q=await api("/api/job/queue"),c=s.counts||{};
+    $("rchips").innerHTML=["kopiert","wartet","fertig","vorhanden","fehler","abgebrochen"].filter(k=>c[k]).map(k=>`<span class="tag ${k==="fehler"||k==="abgebrochen"?"bad":k==="fertig"||k==="vorhanden"?"ok":""}">${QST[k][0]} ${c[k]} ${QST[k][1]}</span>`).join("");
+    $("rrows").innerHTML=q.items.map(x=>`<tr class="qrow ${x.state}"><td class="qs">${QST[x.state][0]} ${QST[x.state][1]}</td><td class="t" title="${esc(x.err||"")}">${esc(x.name)}${x.err?`<br><small class="sub">${esc(x.err)}</small>`:""}</td><td class="s">${fmt(x.size)}</td></tr>`).join("");
+    $("rhid").textContent=q.hidden?`… und ${q.hidden} weitere ausgeblendet`:""}catch{}}
+  try{const a=await api("/api/analysis/status");$("ranacard").hidden=!a.running;
+    if(a.running){$("ranatxt").textContent=`${a.done} von ${a.total||"…"} Dateien · ${a.current||""}`;$("ranabar").style.width=(a.total?a.done/a.total*100:5)+"%"}}catch{}}
+$("rwaitclear").onclick=async()=>{await api("/api/queue/clear",{});toast("Warteschlange geleert");poll()};
+$("rstop").onclick=()=>api("/api/cancel",{}).then(()=>toast("Wird abgebrochen…"));
+$("rtosort").onclick=()=>show("sort");
+
+/* Fortschritt + Zeitplan-Anzeige (läuft immer, zeigt auch Zeitplan-Läufe) */
+let wasRunning=false,lastDone=-1;
+const dlgOpen=()=>[...document.querySelectorAll("dialog")].some(d=>d.open);
+$("schgo").onclick=()=>show("sched");
+let exDone=-1;
+function drawDisk(d){const el=$("disk");el.hidden=!d;if(!d)return;
+  el.classList.toggle("warn",d.pct>=85&&d.pct<95);el.classList.toggle("bad",d.pct>=95);
+  $("disk-bar").style.width=d.pct+"%";$("disk-txt").textContent=`${d.pct.toFixed(0)} % belegt · ${fmt(d.free)} frei`;el.title=`${d.path}: ${fmt(d.used)} von ${fmt(d.total)} belegt`}
+async function poll(){try{
+  const s=await api("/api/status");
+  running=s.running;drawDisk(s.disk);
+  const pct=s.total?Math.min(100,s.done/s.total*100):0;
+  $("pt").style.width=pct+"%";$("pct").textContent=pct.toFixed(0)+" %";
+  $("pf").style.width=(s.current_size?s.current_done/s.current_size*100:0)+"%";
+  $("cur").textContent=s.running?`${s.source||""}: ${s.current}`:"";
+  $("spd").textContent=s.running&&s.speed?fmt(s.speed)+"/s":"";
+  $("txt").textContent=`${s.files_done} von ${s.files_total} Dateien, ${fmt(s.done)} von ${fmt(s.total)}`;
+  const sc=s.schedule;$("sch").title=sc.last||"";
+  $("sch").innerHTML=sc.enabled?`<span class="pill on">⏰ Zeitplan an</span> <span><span class="hide-m">nächster Lauf</span> <b>${esc(sc.next||"–")}</b></span> <code class="hide-m">${esc(sc.cron)}</code>`
+    :'<span class="pill">⏰ Zeitplan aus, nur manuell</span>';
+  $("dk-run").hidden=!s.running;$("dk-tot").hidden=!(s.running||s.finished);
+  $("ptw").classList.toggle("run",s.running);
+  $("stop").hidden=!s.running;$("err").textContent=s.errors.join("\n");updateGo();
+  if(wasRunning&&!s.running){
+    toast(s.errors.length?`Fertig mit ${s.errors.length} Fehler(n)`:`Fertig: ${s.files_done} von ${s.files_total} Dateien`,s.errors.length?"bad":"ok");
+    show(view)}
+  const ex=s.extract||{};const ne=$("ne");ne.hidden=!(ex.pw||ex.n||ex.err);ne.className="badge"+(ex.pw||ex.err?" hot":ex.running?" live":"");
+  ne.textContent=ex.pw?"🔑":ex.err?"!":ex.n||"";
+  $("warn2").innerHTML=ex.pw?`<div class="banner warn">🔑 <span><b>Passwort fehlt</b> für ${ex.pw} Archiv(e). <button class="link" id="expwgo">Jetzt eingeben</button></span></div>`:"";
+  if($("expwgo"))$("expwgo").onclick=()=>show("ext");
+  if(view==="ext")loadExt();
+  if(exDone!==ex.done){if(exDone>=0&&view==="sort"&&!dlgOpen())reloadKeep();exDone=ex.done}
+  const nr=$("nr");const wn=(s.waiting||[]).length;nr.hidden=!s.running&&!wn;nr.textContent=(s.running?Math.round(pct)+"%":"")+(wn?` +${wn}`:"");
+  if(view==="run")renderRun(s);
+  if(s.running&&view==="sort"&&s.files_done!==lastDone&&!dlgOpen()){lastDone=s.files_done;reloadKeep()}
+  if(!s.running)lastDone=-1;
+  wasRunning=s.running}catch{}}
+setInterval(poll,1000);
+/* Duplikate */
+let dres=null,dsel=new Set(),dshow=40,dfilter="Alle",dtimer,dWas=false;
+const dIc={Film:"🎬",Folge:"📺"};
+async function loadDup(){
+  const r=await api("/api/dupes");dres=r;
+  const known=new Set(r.groups.flatMap(g=>g.files.map(f=>f.path)));dsel=new Set([...dsel].filter(p=>known.has(p)));
+  setBadge("nd",r.groups.length);
+  if(r.running){dWas=true;dupPoll()}
+  drawDup()}
+function dupPoll(){clearTimeout(dtimer);dtimer=setTimeout(async()=>{
+  if(view!=="dup")return;
+  try{const r=await api("/api/dupes");
+    if(r.running){dres=Object.assign(dres||{},{running:true,total:r.total,done:r.done,current:r.current});drawDupProg();dupPoll()}
+    else if(dWas){dWas=false;toast(r.error?"Scan fehlgeschlagen":"Duplikat-Scan fertig",r.error?"bad":"ok");loadDup()}}catch{dupPoll()}},1000)}
+function drawDupProg(){const r=dres;
+  $("dprog").hidden=!r.running;$("dstop").hidden=!r.running;$("dstart").disabled=r.running||!r.mounted;
+  $("dtxt").textContent=r.current==="Vergleiche …"?"Vergleiche …":`${r.total} Dateien gelesen${r.current?": "+r.current:""}`;
+  $("dpct").textContent="";$("derr").hidden=!r.error;$("derr").textContent=r.error?"⚠️ "+r.error:""}
+const dSize=()=>new Map(dres.groups.flatMap(g=>g.files.map(f=>[f.path,f.size])));
+function drawDupSel(){
+  const sz=dSize(),n=dsel.size,tot=[...dsel].reduce((a,p)=>a+(sz.get(p)||0),0);
+  const full=dres.groups.filter(g=>g.files.every(f=>dsel.has(f.path))).length;
+  $("dsel").textContent=n?`${n} markiert · ${fmt(tot)} werden frei`+(full?` · ⚠️ In ${full} Gruppe(n) ist alles markiert, dort bleibt eine Datei`:""):"Nichts markiert";
+  $("ddel").disabled=!n}
+function dupFile(g,f){
+  const keep=f.path===g.keep,parts=f.path.split("/"),name=parts.pop(),dir=dres.root.replace(/\/$/,"")+"/"+parts.join("/");
+  const q=[f.codec,f.h?`${f.w}×${f.h}`:""].filter(Boolean).join(" · "),on=dsel.has(f.path);
+  return `<label class="dgf${on?" sel":""}"><input type="checkbox" data-p="${esc(f.path)}" ${on?"checked":""} aria-label="markieren">
+    <span class="dgi"><span class="dgn">${esc(name)} ${keep?'<span class="tag ok">⭐ Vorschlag: behalten</span>':""}</span>
+    <code class="dgp">${esc(dir)}</code>
+    <span class="dgm"><b>${fmt(f.size)}</b>${q?" · "+esc(q):""} · ${new Date(f.m*1000).toLocaleDateString("de-DE")}</span></span></label>`}
+function dupGroup(g,gi){const ex=g.level==="exakt";
+  return `<div class="card wide dg"><div class="dgh"><div><b>${dIc[g.type]||""} ${esc(g.label)}</b> <span class="tag ${ex?"bad":"warn"}">${ex?"Exakt":"Ähnlich"}</span>
+    ${g.reasons.map(x=>`<span class="tag">${esc(x)}</span>`).join(" ")}</div>
+    <div class="sub">${g.files.length} Dateien · doppelt belegt <b>${fmt(g.waste)}</b></div></div>
+    ${g.files.map(f=>dupFile(g,f)).join("")}
+    <div class="bar" style="margin:8px 0 0"><button data-rest="${gi}">☑️ Alle außer Vorschlag markieren</button></div></div>`}
+function drawDup(){
+  const r=dres,gs=r.groups,has=gs.length>0;
+  drawDupProg();$("dmount").hidden=r.mounted;
+  $("dmeta").textContent=r.ts?`Letzter Scan ${fdate(r.ts)}: ${r.scanned} Dateien in ${r.root}`:r.root;
+  $("dempty").hidden=has||r.running;$("dbody").hidden=!has;
+  if(!has){const done=!!r.ts;$("det").textContent=done?"Keine Duplikate gefunden":"Noch kein Scan";
+    $("des").textContent=done?`${r.scanned} Dateien geprüft, nichts ist doppelt oder ähnlich.`:"Starte den Scan, um doppelte und ähnliche Dateien zu finden.";drawDupSel();return}
+  $("d-g").textContent=gs.length;$("d-f").textContent=gs.reduce((a,g)=>a+g.files.length,0);$("d-w").textContent=fmt(r.waste);
+  const cnt={Alle:gs.length,exakt:gs.filter(g=>g.level==="exakt").length,ähnlich:gs.filter(g=>g.level!=="exakt").length};
+  if(dfilter!=="Alle"&&!cnt[dfilter])dfilter="Alle";
+  $("dfilter").innerHTML=[["Alle","Alle"],["exakt","🔴 Exakt"],["ähnlich","🟡 Ähnlich"]].filter(([k])=>k==="Alle"||cnt[k]).map(([k,l])=>
+    `<button class="chip ${k===dfilter?"on":""}" data-c="Alle" data-f="${k}">${l} <i>${cnt[k]}</i></button>`).join("");
+  $("dfilter").querySelectorAll("button").forEach(b=>b.onclick=()=>{dfilter=b.dataset.f;dshow=40;drawDup()});
+  const list=gs.map((g,gi)=>[g,gi]).filter(([g])=>dfilter==="Alle"||(dfilter==="exakt")===(g.level==="exakt"));
+  $("dlist").innerHTML=list.slice(0,dshow).map(([g,gi])=>dupGroup(g,gi)).join("");
+  $("dmore").hidden=list.length<=dshow;$("dmore").textContent=`Mehr anzeigen (${list.length-dshow} weitere)`;
+  drawDupSel()}
+$("dlist").addEventListener("change",e=>{const c=e.target.closest("input[data-p]");if(!c)return;
+  c.checked?dsel.add(c.dataset.p):dsel.delete(c.dataset.p);c.closest(".dgf").classList.toggle("sel",c.checked);drawDupSel()});
+$("dlist").addEventListener("click",e=>{const b=e.target.closest("button[data-rest]");if(!b)return;
+  const g=dres.groups[b.dataset.rest];g.files.forEach(f=>f.path===g.keep?dsel.delete(f.path):dsel.add(f.path));drawDup()});
+$("dmarkall").onclick=()=>{dres.groups.filter(g=>dfilter==="Alle"||(dfilter==="exakt")===(g.level==="exakt")).forEach(g=>g.files.forEach(f=>{if(f.path!==g.keep)dsel.add(f.path)}));drawDup()};
+$("dmarknone").onclick=()=>{dsel.clear();drawDup()};
+$("dmore").onclick=()=>{dshow+=40;drawDup()};
+$("dstart").onclick=async()=>{try{await api("/api/dupes/start",{});dWas=true;toast("Scan gestartet","ok");loadDup()}catch(e){toast(e.message,"bad")}};
+$("dstop").onclick=async()=>{await api("/api/dupes/cancel",{})};
+$("ddel").onclick=async()=>{
+  const sz=dSize(),list=[...dsel];if(!list.length)return;
+  const names=list.slice(0,6).map(p=>"• "+p).join("\n")+(list.length>6?`\n… und ${list.length-6} weitere`:"");
+  if(!confirm(`${list.length} Datei(en) (${fmt(list.reduce((a,p)=>a+(sz.get(p)||0),0))}) endgültig aus der Bibliothek löschen?\n\n${names}\n\nPro Gruppe bleibt mindestens eine Datei erhalten. Das lässt sich nicht rückgängig machen. Jellyfin merkt die Änderung beim nächsten Bibliotheks-Scan.`))return;
+  $("ddel").disabled=true;
+  try{const r=await api("/api/dupes/delete",{items:list});
+    toast(`${r.deleted} gelöscht, ${fmt(r.freed)} frei`+(r.kept?`, in ${r.kept} Gruppe(n) blieb eine Datei`:""),r.errors.length?"bad":"ok");
+    if(r.errors.length)toast(r.errors[0],"bad");
+    dsel.clear();loadDup()}catch(e){toast(e.message,"bad");drawDupSel()}};
+
+/* Metadaten-Suche */
+async function metaSearch(p){
+  const name=$(p+"name").value.trim();if(name.length<2){toast("Erst einen Namen eingeben.","bad");return}
+  const cat=$(p+"cat").value,kind=cat==="Anime"?"anime":cat==="Dokus"?"all":"tv";
+  $(p+"msg").textContent="Suche …";$(p+"res").innerHTML="";
+  try{const r=await api("/api/meta/search",{q:name,kind,year:$(p+"year").value});
+    const errs=Object.entries(r.errors).map(([k,e])=>`${r.names[k]}: ${e}`).join(" · ");
+    $(p+"msg").textContent=(r.results.length?"":"Keine Treffer. ")+errs+(/Key/.test(errs)?" (Keys unter ⚙️ Einstellungen)":"");
+    $(p+"res").innerHTML=r.results.map((m,i)=>`<button type="button" class="mhit" data-i="${i}"><span class="mt"><b>${esc(m.title)}</b>${m.year?` (${esc(m.year)})`:""}
+      <span class="tag">${esc(r.names[m.src])}</span> <span class="tag">${esc(m.kind)}</span></span>${m.overview?`<span class="sub">${esc(m.overview)}</span>`:""}</button>`).join("");
+    $(p+"res").querySelectorAll(".mhit").forEach(b=>b.onclick=()=>{const m=r.results[+b.dataset.i];
+      $(p+"name").value=m.title;$(p+"year").value=m.year||"";$(p+"tmdb").value=m.idval||"";
+      ["name","year","tmdb"].forEach(f=>$(p+f).dispatchEvent(new Event("input")));
+      $(p+"res").innerHTML="";$(p+"msg").textContent=m.idval?"":"Diese Quelle liefert keine ID für Jellyfin, nur Name und Jahr."})
+  }catch(e){$(p+"msg").textContent="⚠️ "+e.message}}
+document.querySelectorAll("button[data-mp]").forEach(b=>b.onclick=()=>metaSearch(b.dataset.mp));
+async function loadMeta(){try{const m=await api("/api/meta");
+  for(const k of Object.keys(m.names))$("mon-"+k).checked=m.on[k];
+  $("mkey-tmdb").value="";$("mkey-tmdb").placeholder=m.tmdb_set?"gespeichert (zum Ändern neu eingeben)":"API-Key oder Lesetoken";
+  $("mkey-tvdb").value="";$("mkey-tvdb").placeholder=m.tvdb_set?"gespeichert (zum Ändern neu eingeben)":"API-Key"}catch{}}
+async function saveMeta(){const on={};["tmdb","tvdb","anilist","jikan"].forEach(k=>on[k]=$("mon-"+k).checked);
+  await api("/api/meta/config",{on,tmdb_key:$("mkey-tmdb").value,tvdb_key:$("mkey-tvdb").value});await loadMeta()}
+$("msave").onclick=async()=>{try{await saveMeta();toast("Gespeichert","ok")}catch(e){toast(e.message,"bad")}};
+$("mtest").onclick=async()=>{$("mres").textContent="Teste …";
+  try{await saveMeta();const r=await api("/api/meta/search",{q:"The Office",kind:"all"});
+    const n={};r.results.forEach(m=>n[m.src]=(n[m.src]||0)+1);
+    $("mres").innerHTML=Object.keys(r.names).filter(k=>$("mon-"+k).checked).map(k=>r.errors[k]?`⚠️ ${r.names[k]}: ${esc(r.errors[k])}`:`✅ ${r.names[k]}: ${n[k]||0} Treffer`).join("<br>")}
+  catch(e){$("mres").textContent="⚠️ "+e.message}};
+
+/* Update */
+async function loadUpd(){
+  try{const u=await api("/api/update");
+    $("updrepo").value=u.repo;$("updtok").value="";$("updtok").placeholder=u.token_set?"gespeichert (zum Ändern neu eingeben)":"github_pat_…";
+    $("updback").hidden=!u.backup;$("updwarn").hidden=u.writable;
+    $("updwarn").innerHTML=u.writable?"":"⚠️ <span>app.py ist schreibgeschützt eingebunden. Entferne in der docker-compose.yml bei <code>./app.py</code> das <code>:ro</code> und starte den Stack einmal neu.</span>";
+    $("updsub").textContent=`Läuft: v${u.version} · ${u.build}. Holt die neueste app.py aus GitHub, danach startet MediaButler neu.`}catch{}}
+async function updSave(){await api("/api/update/config",{repo:$("updrepo").value,token:$("updtok").value});$("updtok").value="";await loadUpd()}
+$("updsave").onclick=async()=>{try{await updSave();toast("Gespeichert","ok")}catch(e){toast(e.message,"bad")}};
+$("updchk").onclick=async()=>{
+  $("updres").textContent="Prüfe …";$("updgo").hidden=true;$("updchk").disabled=true;
+  try{await updSave();const r=await api("/api/update/check",{});
+    const what=r.msg?` Letzte Änderung: „${r.msg}“ (${r.date}).`:"";
+    if(r.current){$("updres").textContent=r.pending?"Die Datei ist aktuell, aber der laufende Prozess noch nicht. Ein Neustart reicht.":"✅ Du hast die neueste Version (v"+r.remote_version+" · "+r.remote_build+")."+what;$("updgo").hidden=!r.pending;$("updgo").textContent=r.pending?"🔄 Neu starten":"⬆️ Jetzt aktualisieren"}
+    else{$("updres").textContent=`Neue Version verfügbar: v${r.remote_version} · ${r.remote_build}.${what}`;$("updgo").hidden=false;$("updgo").textContent="⬆️ Jetzt aktualisieren"}
+  }catch(e){$("updres").textContent="⚠️ "+e.message}
+  $("updchk").disabled=false};
+async function afterRestart(msg){
+  $("updres").textContent=msg;$("updgo").hidden=true;$("updback").hidden=true;$("updchk").disabled=true;
+  await new Promise(r=>setTimeout(r,2500));
+  for(let i=0;i<60;i++){try{const r=await fetch("/api/status",{cache:"no-store"});if(r.ok){location.reload();return}}catch{}await new Promise(r=>setTimeout(r,1000))}
+  $("updres").textContent="MediaButler antwortet noch nicht. Schau mit „docker logs mediabutler“ nach.";$("updchk").disabled=false}
+$("updgo").onclick=async()=>{
+  $("updgo").disabled=true;
+  try{const r=await api("/api/update/install",{});
+    if(!r.restart){$("updres").textContent="Schon aktuell.";$("updgo").hidden=true}else await afterRestart(`Installiert (v${r.version} · ${r.build}). Starte neu …`)}
+  catch(e){$("updres").textContent="⚠️ "+e.message;toast(e.message,"bad")}
+  $("updgo").disabled=false};
+$("updback").onclick=async()=>{
+  if(!confirm("Vorherige Version von app.py wiederherstellen und neu starten?"))return;
+  try{await api("/api/update/rollback",{});await afterRestart("Vorherige Version wiederhergestellt. Starte neu …")}catch(e){toast(e.message,"bad")}};
+
+const HV={clarify:"sort",sort:"sort",run:"run",ext:"ext",hist:"hist",clean:"clean",dup:"dup",ana:"ana",sched:"sched",set:"set"};
+function route(){const h=location.hash.slice(1);if(h==="clarify")filter="Klärung";show(HV[h]||"sort")}
+window.addEventListener("hashchange",route);
+const dockEl=document.querySelector(".dock");
+new ResizeObserver(()=>{document.querySelector("main").style.paddingBottom=dockEl.offsetHeight+24+"px"}).observe(dockEl);
+route();poll();
+api("/api/history").then(r=>{setBadge("nh",r.items.length);$("st-hist").textContent=r.items.length});
+api("/api/leftovers").then(r=>setBadge("nc",r.dirs.length));
+api("/api/dupes").then(r=>setBadge("nd",r.groups.length)).catch(()=>{});
+</script></body></html>
