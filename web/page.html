@@ -415,6 +415,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 </form></dialog>
 
 <section id="v-dl" hidden>
+  <div id="dlacc" class="card wide" hidden></div>
   <div id="dlpk"></div>
   <div id="dlempty" class="empty card wide" hidden><div class="big">⬇️</div><b>Keine Downloads</b>Links oben einfügen oder per Click'n'Load aus dem Browser senden.</div>
   <div class="card wide">
@@ -730,11 +731,17 @@ function fillDlCfg(c){$("dl-dir").value=$("dl-dir").matches(":focus")?$("dl-dir"
     if(!$("dl-login").matches(":focus"))$("dl-login").value=c.dd_login||"";
     $("dl-key").placeholder=c.dd_key_set?"gespeichert (zum Ändern neu eingeben)":"API-Key";$("dl-pass").placeholder=c.dd_pass_set?"gespeichert":"Passwort";$("dlcnl").textContent=c.cnl_port;
     $("dl-ck").innerHTML=Object.keys(c.cookie_hosts).length?"Gespeicherte Cookies: "+Object.entries(c.cookie_hosts).map(([h,n])=>`<span class="tag">${esc(h)} · ${n}</span><button class="rn" data-ckdel="${esc(h)}">✕</button>`).join(" "):"Noch keine Cookies gespeichert."}
+let accT=0;
+async function loadAcc(force){try{const r=await api("/api/dl/accounts"+(force?"?force=1":"")),b=$("dlacc");accT=Date.now();
+  b.hidden=!r.accounts.length;if(!r.accounts.length)return;
+  b.innerHTML=`<b>👑 Aktive Premium-Accounts</b>`+r.accounts.map(a=>`<div class="amit"><span class="tag ${!a.ok?"bad":a.premium===false?"warn":"ok"}">${!a.ok?"⛔":a.premium===false?"⚠️":"✅"} ${esc(a.host)}</span> <span class="sub">${esc(a.mode)} · ${esc(a.text||"")}${a.traffic!=null?" · Traffic übrig: "+esc(String(a.traffic)):""}</span></div>`).join("")+`<button class="rn" id="accr" style="margin-top:8px">↻ Neu prüfen</button>`;
+  $("accr").onclick=()=>loadAcc(true)}catch{}}
 const spd=n=>n>0?fmt(n)+"/s":"";
 async function loadDl(cfg){try{const r=await api("/api/dl");
   setBadge("ndl",r.active);
   const c=r.conf;if((cfg||!dlBusy)&&(view==="dl"||view==="set"))fillDlCfg(c);
   if(view!=="dl")return;
+  if(Date.now()-accT>60000)loadAcc();
   const pk=r.packages;$("dlempty").hidden=!!pk.length;
   const tot=pk.reduce((a,p)=>a+p.speed,0);$("dlsum").textContent=pk.length?`${pk.length} Paket(e)${tot?" · "+spd(tot):""}`:"";
   $("dlpk").innerHTML=pk.map(p=>{const pct=p.size?Math.min(100,Math.round(p.done*100/p.size)):(p.status==="fertig"?100:0),open=dlOpen.has(p.name);
@@ -754,7 +761,7 @@ $("dladd").onclick=async()=>{const v=$("dlin").value.trim();if(!v)return;
   try{const r=await api("/api/dl/add",{links:v,package:$("dlpkg").value});toast(r.added?`${r.added} Link(s) hinzugefügt`:"Keine neuen Links gefunden",r.added?"ok":"bad");if(r.added){$("dlin").value="";$("dlpkg").value=""}loadDl()}catch(e){toast(e.message,"bad")}};
 $("dlclr").onclick=async()=>{await api("/api/dl/action",{action:"clear_done"});loadDl()};
 $("dlcfg").addEventListener("input",()=>dlBusy=true);
-async function saveDl(){const b={dir:$("dl-dir").value,parallel:+$("dl-par").value||2,dd_login:$("dl-login").value,dd_key:$("dl-key").value,dd_pass:$("dl-pass").value};
+async function saveDl(){accT=0;const b={dir:$("dl-dir").value,parallel:+$("dl-par").value||2,dd_login:$("dl-login").value,dd_key:$("dl-key").value,dd_pass:$("dl-pass").value};
   await api("/api/dl/config",b);
   const h=$("dl-ckh").value.trim(),v=$("dl-ckv").value.trim();
   if(h&&v){await api("/api/dl/config",{cookies:{[h]:v}});$("dl-ckv").value=""}

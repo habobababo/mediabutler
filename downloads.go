@@ -66,6 +66,8 @@ type dlManager struct {
 	noRedir *http.Client
 	pkgDone map[string]bool
 	opt     []string
+	acc     []M
+	accT    time.Time
 }
 
 var (
@@ -897,6 +899,11 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 			"cookie_hosts": d.jar.hosts(), "cnl_port": env("CNL_PORT", "9666")}
 		js(w, 200, v)
 	})
+	get("/api/dl/accounts", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+		defer cancel()
+		js(w, 200, M{"accounts": d.accounts(ctx, r.URL.Query().Get("force") == "1")})
+	})
 	post("/api/dl/add", func(w http.ResponseWriter, r *http.Request) {
 		b := body(r)
 		var links []string
@@ -982,6 +989,9 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 			c.Cookies = old.Cookies
 		}
 		d.a.save("dl_conf.json", c)
+		d.mu.Lock()
+		d.acc = nil
+		d.mu.Unlock()
 		for h, v := range c.Cookies {
 			d.jar.importHeader(h, v)
 		}
@@ -1057,4 +1067,58 @@ func premiumInfo(res map[string]any) string {
 		return ", Premium-Traffic vorhanden"
 	}
 	return " (die API meldet keinen Premium-Status, Direktlinks werden trotzdem versucht)"
+}
+
+// accounts: aktive Hoster-Accounts mit Premium-Status (5 Minuten gecacht)
+func (d *dlManager) accounts(ctx context.Context, force bool) []M {
+	d.mu.Lock()
+	if !force && d.acc != nil && time.Since(d.accT) < 5*time.Minute {
+		a := d.acc
+		d.mu.Unlock()
+		return a
+	}
+	d.mu.Unlock()
+	c := d.conf()
+	out := []M{}
+	if c.DDKey != "" {
+		var info struct {
+			Status int            `json:"status"`
+			Msg    string         `json:"msg"`
+			Result map[string]any `json:"result"`
+		}
+		e := d.apiJSON(ctx, fmt.Sprintf("%s/account/info?key=%s", ddAPI, url.QueryEscape(c.DDKey)), &info)
+		acc := M{"host": "ddownload.com", "mode": "API-Key"}
+		if e != nil || info.Status != 200 {
+			acc["ok"], acc["text"] = false, firstNonEmpty(info.Msg, "nicht erreichbar oder Key ungültig")
+		} else {
+			acc["ok"], acc["text"] = true, strings.TrimLeft(premiumInfo(info.Result), ", ")
+			acc["premium"] = !strings.Contains(premiumInfo(info.Result), "abgelaufen") && !strings.Contains(premiumInfo(info.Result), "keinen Premium")
+			if v := info.Result["traffic_left"]; v != nil {
+				acc["traffic"] = v
+			}
+			if v := info.Result["premium_expire"]; v != nil {
+				acc["expire"] = fmt.Sprint(v)
+			}
+		}
+		out = append(out, acc)
+	} else if c.DDLogin != "" {
+		u, _ := url.Parse(ddBase)
+		n := 0
+		for _, ck := range d.jar.Cookies(u) {
+			if ck.Name == "xfss" {
+				n++
+			}
+		}
+		acc := M{"host": "ddownload.com", "mode": "Login " + c.DDLogin, "ok": n > 0, "premium": nil}
+		if n > 0 {
+			acc["text"] = "Login aktiv, Cookies gespeichert (Premium-Status per Login nicht abfragbar, API-Key empfohlen)"
+		} else {
+			acc["text"] = "noch nicht angemeldet, wird beim ersten Download eingeloggt"
+		}
+		out = append(out, acc)
+	}
+	d.mu.Lock()
+	d.acc, d.accT = out, time.Now()
+	d.mu.Unlock()
+	return out
 }
