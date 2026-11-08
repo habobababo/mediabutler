@@ -32,9 +32,12 @@ func main() {
 		user: env("AUTH_USER", "admin"), pass: env("AUTH_PASS", ""), apiKey: env("API_KEY", ""), version: version}
 	a.qcond = sync.NewCond(&a.qmu)
 	a.ex = &exState{m: map[string]*exEntry{}}
+	a.alerts, a.scanPath = map[string]bool{}, map[string]bool{}
 	go a.queueWorker()
 	go a.scheduler()
 	go a.extractLoop()
+	go a.watcher()
+	go a.tgPoller()
 	port := env("PORT", "8080")
 	fmt.Printf("MediaButler (Go) %s auf :%s – Quelle %s, Ziel %s\n", version, port, src, tgt)
 	if err := http.ListenAndServe(":"+port, a.routes()); err != nil {
@@ -123,11 +126,12 @@ func (a *App) routes() http.Handler {
 	}
 	for _, p := range []string{"/api/analysis/start", "/api/analysis/cancel", "/api/dupes/start",
 		"/api/dupes/cancel", "/api/dupes/delete", "/api/update/config", "/api/update/check", "/api/update/install", "/api/update/rollback",
-		"/api/meta/config", "/api/meta/search", "/api/jellyfin/test", "/api/telegram/test"} {
+		"/api/meta/config", "/api/meta/search"} {
 		post(p, notYet)
 	}
 
 	a.exRoutes(get, post)
+	a.notifyRoutes(post)
 
 	page, _ := webFS.ReadFile("web/page.html")
 	sum := sha256.Sum256(page)

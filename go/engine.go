@@ -67,6 +67,12 @@ type App struct {
 
 	ex *exState
 
+	alerts   map[string]bool
+	marks    []int
+	runT0    time.Time
+	scanDue  bool
+	scanPath map[string]bool
+
 	diskT time.Time
 	diskV map[string]any
 }
@@ -463,7 +469,11 @@ func (a *App) queueWorker() {
 			}
 		}
 		a.active = nil
+		idle := len(a.pending) == 0
 		a.qmu.Unlock()
+		if idle {
+			a.jfAfterQueue()
+		}
 	}
 }
 
@@ -487,63 +497,6 @@ func (a *App) busy() bool {
 	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	f.Close()
 	return false
-}
-
-func (a *App) runJob(items []item, source string) {
-	f := acquire()
-	if f == nil {
-		a.mu.Lock()
-		a.job.Errors = append(a.job.Errors, "Es läuft bereits ein anderer Kopiervorgang.")
-		a.job.Running, a.job.Finished = false, true
-		a.mu.Unlock()
-		return
-	}
-	c := a.cfg()
-	ok := a.copyItems(items, source, c.MoveAfter)
-	removed := 0
-	moved := map[string]bool{}
-	for _, it := range ok {
-		if _, err := os.Stat(a.abs(it.src)); err != nil {
-			moved[it.src] = true
-		}
-	}
-	if p := a.getPaths(); len(moved) > 0 {
-		np := map[string]PathOv{}
-		for k, v := range p {
-			if !moved[k] {
-				np[k] = v
-			}
-		}
-		a.setPaths(np)
-	}
-	if g := a.getGroups(); len(moved) > 0 {
-		ng := map[string]Group{}
-		for k, v := range g {
-			if !moved[k] {
-				ng[k] = v
-			}
-		}
-		a.setGroups(ng)
-	}
-	if c.CleanupAfter {
-		removed = a.cleanupLeftovers()
-	}
-	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	f.Close()
-	_, unclear := a.scan()
-	a.mu.Lock()
-	res := fmt.Sprintf("%s: %d von %d Datei(en)", source, a.job.FilesDone, a.job.FilesTotal)
-	if n := len(a.job.Errors); n > 0 {
-		res += fmt.Sprintf(", %d Fehler", n)
-	}
-	a.mu.Unlock()
-	if removed > 0 {
-		res += fmt.Sprintf(", %d Ordner entfernt", removed)
-	}
-	if len(unclear) > 0 {
-		res += fmt.Sprintf(", %d zur Klärung offen", len(unclear))
-	}
-	a.saveCfg(func(c *Config) { c.LastRun = time.Now().Format("2006-01-02 15:04:05"); c.LastResult = res })
 }
 
 func (a *App) copyItems(items []item, source string, move bool) []item {
@@ -652,6 +605,7 @@ func (a *App) copyOne(it item, qi *queueItem, move bool) (err error) {
 				a.job.Speed = float64(a.job.CurrentDone) / el
 			}
 			a.mu.Unlock()
+			a.progressCheck()
 		}
 		if rerr == io.EOF {
 			break
@@ -696,9 +650,11 @@ func (a *App) copyOne(it item, qi *queueItem, move bool) (err error) {
 
 func (a *App) trigger(source string) (bool, string) {
 	if st, err := os.Stat(a.target); err != nil || !st.IsDir() {
+		a.alertOnce("target", true, fmt.Sprintf("🚨 Handlungsbedarf – MediaButler\nDas Ziel %s ist nicht erreichbar. Ist das NFS-Share eingebunden? Bis dahin wird nichts kopiert.", a.target), "")
 		return false, fmt.Sprintf("Ziel %s nicht erreichbar (NFS gemountet?)", a.target)
 	}
 	items, unclear := a.scan()
+	a.unclearNotice(unclear)
 	n, waits := a.enqueue(items, source)
 	if n == 0 && len(items) > 0 {
 		return false, "Alle fertigen Dateien laufen schon oder warten bereits."

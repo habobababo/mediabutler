@@ -525,9 +525,9 @@ func (a *App) extractRun(e *exEntry) {
 			}
 		})
 		if state == "fehler" {
-			a.notify(fmt.Sprintf("⚠️ MediaButler: Entpacken fehlgeschlagen\n📦 %s\n%s", e.Name, msg), "tg_errors")
+			a.notify(fmt.Sprintf("⚠️ MediaButler: Entpacken fehlgeschlagen\n📦 %s\n%s", e.Name, msg)+a.linkLine("ext"), "tg_errors")
 		} else if state == "passwort" {
-			a.notify(fmt.Sprintf("🔑 Passwort fehlt – MediaButler\n📦 %s\n%s", e.Name, msg), "tg_pw")
+			a.exNotifyPw(e)
 		}
 	}
 	type res struct {
@@ -724,8 +724,6 @@ func (a *App) extractLoop() {
 }
 
 func (a *App) sevenOK() bool { return sevenz() != "" }
-
-func (a *App) notify(text, kind string) {} // Telegram folgt in einer späteren Stufe
 
 // ---------- HTTP ----------
 
