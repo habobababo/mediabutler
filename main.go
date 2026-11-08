@@ -17,7 +17,7 @@ import (
 //go:embed web/*
 var webFS embed.FS
 
-const version = "1.1.0-go"
+const version = "2.0.0"
 
 var publicPaths = map[string]bool{"/icon-64.png": true, "/icon-192.png": true, "/icon-512.png": true,
 	"/apple-touch-icon.png": true, "/favicon.ico": true, "/manifest.webmanifest": true}
