@@ -1,6 +1,7 @@
 services:
   mediabutler:
-    build: .
+    image: ghcr.io/habobababo/mediabutler:latest   # fertiges Image von GitHub (alternativ: build: .)
+    # build: .
     container_name: mediabutler
     restart: unless-stopped
     ports:

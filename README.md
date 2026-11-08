@@ -48,3 +48,7 @@ Nach dem Kopieren legt MediaButler zu Titeln mit bestätigter TMDB-/TVDB-ID eine
 ### Browser-Plugin installieren (Chrome, Edge, Brave, Opera)
 
 Auf der Downloads-Seite „🧩 Browser-Plugin laden“ (oder `/api/dl/plugin.zip`). ZIP entpacken, `chrome://extensions` öffnen (Edge: `edge://extensions`), Entwicklermodus einschalten, „Entpackte Erweiterung laden“ und den Ordner wählen. Im Plugin Server-Adresse und API-Key eintragen. Danach landen Click'n'Load-Links automatisch bei MediaButler.
+
+### Docker-Image von GitHub
+
+Bei jedem Push baut GitHub das Image für amd64 und arm64 und legt es in der GitHub Container Registry ab: `ghcr.io/habobababo/mediabutler:latest` (zusätzlich `:v<Build-Nr>`). Das Repo ist privat, daher einmalig am Server anmelden: `echo <Token mit read:packages> | docker login ghcr.io -u habobababo --password-stdin`. Dann `docker compose pull && docker compose up -d`.

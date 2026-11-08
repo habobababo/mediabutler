@@ -2,7 +2,7 @@ name: go-release
 on:
   push:
     branches: [main]
-    paths: ["**.go", "go.mod", "go.sum", "vendor/**", "web/**", ".github/workflows/go-release.yml"]
+    paths: ["**.go", "go.mod", "go.sum", "vendor/**", "web/**", "chrome-extension/**", ".github/workflows/go-release.yml"]
   workflow_dispatch:
 jobs:
   build:
