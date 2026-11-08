@@ -755,9 +755,6 @@ func (d *dlManager) view() M {
 			order = append(order, p)
 		}
 		p.Items = append(p.Items, it)
-		p.Size += it.Size
-		p.Done += it.Done
-		p.Speed += it.Speed
 		switch it.Status {
 		case "fertig":
 			p.nd++
@@ -772,6 +769,7 @@ func (d *dlManager) view() M {
 	pkgs := []M{}
 	active := 0
 	for _, p := range order {
+		p.Done, p.Size, p.Speed, _, _ = pkgProgress(p.Items)
 		sort.SliceStable(p.Items, func(i, j int) bool { return p.Items[i].Name < p.Items[j].Name })
 		st := "wartet"
 		switch {
@@ -1163,33 +1161,86 @@ func (d *dlManager) ddViaAPI(ctx context.Context, key, code string) (*resolved, 
 }
 
 // summary: Gesamtfortschritt aller aktiven/wartenden Downloads für den Header
+// pkgProgress: Gesamtfortschritt eines Pakets. Unbekannte Größen (noch nicht aufgelöste Dateien) werden mit dem Schnitt der bekannten geschätzt.
+func pkgProgress(items []*DLItem) (done, size, speed int64, files, fin int) {
+	var known, nk int64
+	for _, it := range items {
+		if it.Size > 0 {
+			known += it.Size
+			nk++
+		}
+	}
+	avg := int64(0)
+	if nk > 0 {
+		avg = known / nk
+	}
+	for _, it := range items {
+		files++
+		speed += it.Speed
+		sz := it.Size
+		if sz == 0 {
+			sz = avg
+		}
+		if it.Status == "fertig" {
+			fin++
+			if sz < it.Done {
+				sz = it.Done
+			}
+			done += sz
+		} else {
+			done += it.Done
+		}
+		size += sz
+	}
+	return
+}
+
 func (d *dlManager) summary() M {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var active, waiting int
-	var done, size, speed int64
-	name := ""
+	var speed int64
+	byPkg := map[string][]*DLItem{}
+	var order []string
 	for _, it := range d.f.Items {
+		if byPkg[it.Pkg] == nil {
+			order = append(order, it.Pkg)
+		}
+		byPkg[it.Pkg] = append(byPkg[it.Pkg], it)
 		switch it.Status {
 		case "lädt":
 			active++
-			if name == "" {
-				name = it.Pkg
-			}
+			speed += it.Speed
 		case "wartet":
 			waiting++
-		default:
+		}
+	}
+	// Fortschritt der Gruppe, die gerade lädt (erste aktive), nicht der einzelnen Datei
+	name := ""
+	pct := 0.0
+	files, fin, pkgs := 0, 0, 0
+	for _, pk := range order {
+		items := byPkg[pk]
+		on := false
+		for _, it := range items {
+			if it.Status == "lädt" {
+				on = true
+			}
+		}
+		if !on {
 			continue
 		}
-		done += it.Done
-		size += it.Size
-		speed += it.Speed
+		pkgs++
+		if name == "" {
+			name = pk
+			dn, sz, _, f, fi := pkgProgress(items)
+			files, fin = f, fi
+			if sz > 0 {
+				pct = float64(dn) * 100 / float64(sz)
+			}
+		}
 	}
-	pct := 0.0
-	if size > 0 {
-		pct = float64(done) * 100 / float64(size)
-	}
-	return M{"active": active, "waiting": waiting, "done": done, "size": size, "speed": speed, "pct": pct, "name": name}
+	return M{"active": active, "waiting": waiting, "speed": speed, "pct": pct, "name": name, "files": files, "fin": fin, "pkgs": pkgs}
 }
 
 // ---------- ddownload: Ablauf wie im pyLoad-Plugin (XFileSharing) ----------
