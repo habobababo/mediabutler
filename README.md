@@ -44,3 +44,7 @@ Die API liefert Direktlinks nur für eigene Dateien. Für fremde Links nutzt Med
 ### NFO-Dateien für Jellyfin
 
 Nach dem Kopieren legt MediaButler zu Titeln mit bestätigter TMDB-/TVDB-ID eine NFO an: bei Filmen `<Datei>.nfo`, bei Serien `tvshow.nfo` im Serienordner (Titel, Jahr, Handlung, Genres, IDs). Vorhandene NFOs werden nie überschrieben. Abschalten mit `NFO=0`.
+
+### Browser-Plugin installieren (Chrome, Edge, Brave, Opera)
+
+Auf der Downloads-Seite „🧩 Browser-Plugin laden“ (oder `/api/dl/plugin.zip`). ZIP entpacken, `chrome://extensions` öffnen (Edge: `edge://extensions`), Entwicklermodus einschalten, „Entpackte Erweiterung laden“ und den Ordner wählen. Im Plugin Server-Adresse und API-Key eintragen. Danach landen Click'n'Load-Links automatisch bei MediaButler.

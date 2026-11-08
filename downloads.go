@@ -1,9 +1,11 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -71,6 +73,9 @@ type dlManager struct {
 	acc     []M
 	accT    time.Time
 }
+
+//go:embed chrome-extension/*
+var pluginFS embed.FS
 
 var (
 	ddBase   = strings.TrimRight(env("DDL_BASE", "https://ddownload.com"), "/")
@@ -975,6 +980,22 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 			return
 		}
 		js(w, 200, M{"ok": true, "info": "Login ok, Cookies gespeichert"})
+	})
+	// Chrome-Plugin als ZIP zum Installieren (Entpacken, chrome://extensions, Entwicklermodus, Entpackte Erweiterung laden)
+	get("/api/dl/plugin.zip", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="mediabutler-chrome-plugin.zip"`)
+		zw := zip.NewWriter(w)
+		defer zw.Close()
+		ents, _ := pluginFS.ReadDir("chrome-extension")
+		for _, e := range ents {
+			b, err := pluginFS.ReadFile("chrome-extension/" + e.Name())
+			if err != nil {
+				continue
+			}
+			f, _ := zw.Create("mediabutler-plugin/" + e.Name())
+			f.Write(b)
+		}
 	})
 	post("/api/dl/diagnose", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)

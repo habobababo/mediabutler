@@ -301,6 +301,8 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 .mhit{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;padding:9px 12px;border-radius:12px;width:100%}.mhit .sub{font-size:12.5px;line-height:1.35}
 .mon{display:flex;gap:10px;align-items:center;margin:6px 0}
 
+a.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:12px;border:1px solid var(--line);background:var(--soft);color:var(--ink);font-weight:600;text-decoration:none;min-height:38px}
+a.btn:hover{border-color:var(--brand)}
 /* ===== Überarbeitung: Kopfbereich, Navigation, Ruhe ===== */
 .hero{display:grid;grid-template-columns:1fr auto;gap:16px 24px;align-items:center;padding:18px 22px;border-radius:18px;margin-bottom:18px;
  background:radial-gradient(900px 220px at 0% 0%,rgba(139,212,156,.16),transparent 60%),radial-gradient(700px 220px at 100% 100%,rgba(143,184,255,.12),transparent 60%),var(--surface);
@@ -472,7 +474,7 @@ button.primary{box-shadow:0 3px 12px rgba(139,212,156,.22)}
   <div class="card wide">
     <header><span class="ico">⬇️</span><div><h2>Links hinzufügen</h2><p class="sub">Einen oder mehrere Links einfügen (HTTP, HTTPS, ddownload.com). Teile wie <code>.part01.rar</code> werden automatisch zu einem Paket gruppiert.</p></div></header>
     <textarea id="dlin" rows="4" class="mono" placeholder="https://ddownload.com/…&#10;https://…" style="width:100%"></textarea>
-    <div class="bar"><input id="dlpkg" placeholder="Paketname (optional)" style="flex:1 1 200px"><button class="primary" id="dladd">➕ Hinzufügen</button><button id="dlclr">🧹 Fertige entfernen</button><span id="dlsum" class="sub"></span></div>
+    <div class="bar"><input id="dlpkg" placeholder="Paketname (optional)" style="flex:1 1 200px"><button class="primary" id="dladd">➕ Hinzufügen</button><button id="dlclr">🧹 Fertige entfernen</button><a class="btn" href="/api/dl/plugin.zip" download title="Chrome, Edge, Brave, Opera: entpacken, unter Erweiterungen im Entwicklermodus laden">🧩 Browser-Plugin laden</a><span id="dlsum" class="sub"></span></div>
   </div>
 </section>
 <section id="v-run" hidden>
