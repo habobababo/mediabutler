@@ -74,27 +74,46 @@ button.link{border:0;background:none;padding:0;min-height:0;color:var(--brand);t
 :focus-visible{outline:3px solid color-mix(in srgb,var(--brand) 55%,transparent);outline-offset:2px}
 input[type=checkbox]{width:18px;height:18px;accent-color:var(--brand)}
 
-/* Reiter */
-.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding:6px 0;margin-bottom:8px;display:flex;justify-content:flex-end}
-.nav{display:flex;gap:6px;max-width:100%}
-.nav button{position:relative;border-radius:999px;background:var(--surface);white-space:nowrap;display:flex;gap:6px;align-items:center;justify-content:center;padding:0;width:42px;height:42px;min-height:42px;font-size:19px;line-height:1}
-.nav button .lbl{display:none;font-size:14px;font-weight:600}
-.nav button.on{width:auto;padding:0 14px;background:var(--brand);color:var(--brand-ink);border-color:transparent;box-shadow:none}
-@media (min-width:700px){.nav button.on .lbl{display:inline}}
-.nav .badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;line-height:18px;font-size:11px;padding:0 5px;box-shadow:0 0 0 2px var(--bg)}
-.nav .grp{display:none}
+/* Navigation: Drawer (mobil), Sidebar mit Minimieren (Desktop) */
+.appbar{position:sticky;top:0;z-index:7;display:flex;align-items:center;gap:10px;background:var(--bg);padding:calc(8px + env(safe-area-inset-top,0px)) 0 8px;margin:-4px 0 6px}
+.appbar #menu{position:relative;width:44px;height:44px;min-height:44px;padding:0;font-size:22px;border-radius:12px;flex:none}
+.appbar #vtitle{font-size:18px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.appbar #menu[data-dot]::after{content:"";position:absolute;top:6px;right:6px;width:10px;height:10px;border-radius:50%;background:var(--warn);box-shadow:0 0 0 2px var(--bg)}
+.topbar{position:fixed;left:0;top:0;bottom:0;width:min(300px,86vw);z-index:30;background:var(--surface);border-right:1px solid var(--line);padding:calc(14px + env(safe-area-inset-top,0px)) 12px 14px;overflow-y:auto;transform:translateX(-102%);transition:transform .22s ease;display:flex;flex-direction:column}
+body.navopen .topbar{transform:none}
+#scrim{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:opacity .2s}
+body.navopen #scrim{opacity:1;pointer-events:auto}
+.navhead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 4px 10px}
+.navhead b{font-size:16px}
+.navhead button{width:40px;height:40px;min-height:40px;padding:0;border-radius:10px;font-size:18px}
+.nav{display:flex;flex-direction:column;gap:3px}
+.nav .grp{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:16px 12px 5px}
+.nav .grp:first-child{padding-top:2px}
+.nav button{position:relative;width:100%;min-height:48px;padding:0 12px;display:flex;gap:12px;align-items:center;justify-content:flex-start;border-radius:12px;font-size:19px;line-height:1;background:transparent;border-color:transparent;box-shadow:none;white-space:nowrap}
+.nav button .ic{width:26px;text-align:center;flex:none}
+.nav button .lbl{display:inline;font-size:15.5px;font-weight:600}
+.nav button:hover{background:var(--bg)}
+.nav button.on{background:var(--brand);color:var(--brand-ink)}
+.nav .badge{position:static;margin-left:auto;box-shadow:none}
+.nav .grp{position:static}
+#navtoggle{display:none}
 @media (min-width:900px){
- body{padding-left:216px}
- .topbar{position:fixed;left:0;top:0;bottom:0;width:216px;margin:0;padding:18px 12px;display:block;background:var(--surface);border-right:1px solid var(--line);overflow-y:auto;z-index:6}
- .nav{flex-direction:column;gap:3px}
- .nav .grp{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:16px 12px 5px}
- .nav .grp:first-child{padding-top:2px}
- .nav button,.nav button.on{width:100%;height:auto;min-height:42px;padding:0 12px;justify-content:flex-start;border-radius:12px;font-size:17px;background:transparent;border-color:transparent;box-shadow:none}
- .nav button:hover{background:var(--bg)}
- .nav button .lbl,.nav button.on .lbl{display:inline;font-size:14.5px}
- .nav button.on{background:var(--brand);color:var(--brand-ink)}
- .nav .badge{position:static;margin-left:auto;box-shadow:none}
- .dock{left:216px}
+ .appbar,#scrim{display:none}
+ body{padding-left:216px;transition:padding-left .2s}
+ .topbar{width:216px;transform:none;transition:width .2s;display:block}
+ .nav button{min-height:42px;font-size:17px}.nav button .lbl{font-size:14.5px}
+ .navhead #navclose{display:none}
+ #navtoggle{display:inline-flex;align-items:center;justify-content:center}
+ .dock{left:216px;transition:left .2s}
+ body.mini{padding-left:68px}
+ body.mini .topbar{width:68px;padding-left:8px;padding-right:8px}
+ body.mini .dock{left:68px}
+ body.mini .navhead b,body.mini .nav .lbl{display:none}
+ body.mini .navhead{justify-content:center}
+ body.mini .nav .grp{font-size:0;padding:8px 0;margin:6px 10px 0;border-top:1px solid var(--line)}
+ body.mini .nav .grp:first-child{border-top:0;margin-top:0}
+ body.mini .nav button{justify-content:center;padding:0}
+ body.mini .nav .badge{position:absolute;top:4px;right:4px;min-width:16px;height:16px;line-height:16px;font-size:10px;padding:0 4px}
 }
 .badge{min-width:20px;height:20px;border-radius:10px;padding:0 6px;font-size:12px;line-height:20px;text-align:center;background:var(--soft);color:var(--muted)}
 .badge.hot{background:var(--warn);color:var(--brand-ink)}
@@ -177,7 +196,7 @@ details ol{padding-left:20px;margin:6px 0}
 @media (pointer:coarse){button.chip{min-height:38px;font-size:14px;padding:4px 12px}}
 @media (max-width:720px){
  .hero{grid-template-columns:1fr;padding:18px 16px 16px;gap:12px;border-radius:20px}.hero .stats{grid-column:1;grid-row:auto;width:100%}
- .hero .logo{width:52px;height:52px;border-radius:14px}.hero h1{font-size:23px}.hero .claim{font-size:13px}
+ .hero{padding:12px 14px;gap:10px;border-radius:16px}.hero .brand{display:none}.hero .ver{position:static;grid-column:1;font-size:11px}
  .stat{flex:1;min-width:0;padding:7px 10px}.stat span{white-space:normal}
  .stat span{font-size:12px;line-height:1.25}
  .bar.tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}.bar.tools button{padding:6px 8px;white-space:nowrap}
@@ -204,7 +223,7 @@ details ol{padding-left:20px;margin:6px 0}
  .dock{padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px))}
  .hide-m{display:none}.prog{height:11px;margin-bottom:6px}.prog.thin{height:6px}
  .dock .bar button.primary{flex:1}
- .nav{gap:4px}.nav button{width:38px;height:38px;min-height:38px;font-size:18px}.nav button.on{width:38px;padding:0}}
+}
 .wide{max-width:none}
 button.toggle.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 dialog{border:1px solid var(--line);border-radius:12px;padding:20px;background:var(--surface);color:var(--text,inherit);width:min(460px,calc(100vw - 32px));box-shadow:none}
@@ -280,7 +299,9 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body><main>
 
-<div class="topbar"><nav class="nav" id="nav" aria-label="Bereiche">
+<div class="appbar"><button id="menu" aria-label="Menü öffnen" aria-expanded="false">☰</button><span id="vtitle"></span></div>
+<div id="scrim"></div>
+<div class="topbar"><div class="navhead"><b>🎬 MediaButler</b><button id="navclose" aria-label="Menü schließen">✕</button><button id="navtoggle" aria-label="Seitenleiste ein- oder ausklappen" title="Seitenleiste ein- oder ausklappen">«</button></div><nav class="nav" id="nav" aria-label="Bereiche">
   <span class="grp">Medien</span>
   <button data-v="sort" title="Sortieren" aria-label="Sortieren"><span class="ic">📥</span><span class="lbl">Sortieren</span><span class="badge hot" id="ns" hidden></span></button>
   <button data-v="dl" title="Downloads" aria-label="Downloads"><span class="ic">⬇️</span><span class="lbl">Downloads</span><span class="badge live" id="ndl" hidden></span></button>
@@ -687,10 +708,17 @@ async function copyText(t,btn){
 let view="sort",files=[],cats=[],filter="Alle",hist=[],running=false;
 function show(v){view=v;try{history.replaceState(null,"",v==="sort"?location.pathname+location.search:"#"+v)}catch{}
   for(const s of["sort","dl","run","ext","hist","clean","dup","ana","sched","set"])$("v-"+s).hidden=s!==v;
-  $("nav").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  $("nav").querySelectorAll("button").forEach(b=>{const on=b.dataset.v===v;b.classList.toggle("on",on);if(on)$("vtitle").textContent=b.querySelector(".ic").textContent+" "+b.querySelector(".lbl").textContent});
   $("go").hidden=v!=="sort";$("dk-dup").hidden=v!=="dup";document.querySelector(".dock .sched").hidden=v==="dup";
   ({sort:loadFiles,dl:loadDl,run:()=>api("/api/status").then(renderRun),ext:loadExt,hist:loadHist,clean:loadClean,dup:loadDup,ana:loadAna,sched:loadSched,set:loadSched})[v]()}
-$("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>show(b.dataset.v));
+$("nav").querySelectorAll("button").forEach(b=>b.onclick=()=>{show(b.dataset.v);navOpen(false)});
+function navOpen(o){document.body.classList.toggle("navopen",o);$("menu").setAttribute("aria-expanded",o)}
+$("menu").onclick=()=>navOpen(true);$("navclose").onclick=()=>navOpen(false);$("scrim").onclick=()=>navOpen(false);
+document.addEventListener("keydown",e=>{if(e.key==="Escape")navOpen(false)});
+try{if(localStorage.getItem("nav_mini")==="1")document.body.classList.add("mini")}catch{}
+const miniSync=()=>{$("navtoggle").textContent=document.body.classList.contains("mini")?"»":"«"};miniSync();
+$("navtoggle").onclick=()=>{const m=document.body.classList.toggle("mini");try{localStorage.setItem("nav_mini",m?"1":"0")}catch{}miniSync()};
+setInterval(()=>{$("menu").toggleAttribute("data-dot",!!document.querySelector("#nav .badge.hot:not([hidden])"))},1500);
 
 
 /* Downloads */
