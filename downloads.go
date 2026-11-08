@@ -67,6 +67,7 @@ type dlManager struct {
 	pkgDone map[string]bool
 	opt     []string
 	acc     []M
+	clones  [][2]string
 	accT    time.Time
 }
 
@@ -526,6 +527,7 @@ func (d *dlManager) loop() {
 		case <-d.wake:
 		case <-t.C:
 		}
+		d.ddCleanClones()
 		d.mu.Lock()
 		running := 0
 		for _, it := range d.f.Items {
@@ -1075,7 +1077,8 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 	post("/api/dl/diagnose", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
-		js(w, 200, M{"steps": d.diagnose(ctx, str(body(r)["url"]))})
+		b := body(r)
+		js(w, 200, M{"steps": d.diagnose(ctx, str(b["url"]), b["clone"] == true)})
 	})
 	post("/api/dl/cookies/clear", func(w http.ResponseWriter, r *http.Request) {
 		d.jar.clear(strings.ToLower(str(body(r)["host"])))
@@ -1222,16 +1225,67 @@ func (d *dlManager) ddViaClone(ctx context.Context, key, code string) (*resolved
 	if err := d.apiJSON(ctx, fmt.Sprintf("%s/file/clone?key=%s&file_code=%s", ddAPI, url.QueryEscape(key), code), &cl); err != nil {
 		return nil, err
 	}
-	nc := ""
-	for _, k := range []string{"filecode", "file_code", "code"} {
-		if v, ok := cl.Result[k].(string); ok && v != "" {
-			nc = v
-		}
-	}
+	nc := cloneCode(cl.Result)
 	if nc == "" {
 		return nil, fmt.Errorf("Klonen nicht möglich: %s", firstNonEmpty(cl.Msg, "keine Antwort"))
 	}
-	return d.ddViaAPI(ctx, key, nc)
+	r, err := d.ddViaAPI(ctx, key, nc)
+	d.ddDeleteClone(ctx, key, nc, code)
+	return r, err
+}
+
+func cloneCode(res map[string]any) string {
+	for _, k := range []string{"filecode", "file_code", "code"} {
+		if v, ok := res[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	if u, ok := res["url"].(string); ok {
+		if m := reDDCode.FindStringSubmatch(u); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// ddDeleteClone räumt den angelegten Klon wieder auf (nur den eigenen Klon, nie das Original).
+// Der direkte Link bleibt nach dem Löschen nicht zwingend gültig, daher erst nach dem Start des Downloads aufrufen.
+func (d *dlManager) ddDeleteClone(ctx context.Context, key, clone, orig string) {
+	if clone == "" || clone == orig {
+		return
+	}
+	d.mu.Lock()
+	d.clones = append(d.clones, [2]string{key, clone})
+	d.mu.Unlock()
+}
+
+// ddCleanClones löscht gesammelte Klone, wenn keine Downloads mehr laufen.
+func (d *dlManager) ddCleanClones() {
+	d.mu.Lock()
+	busy := false
+	for _, it := range d.f.Items {
+		if it.Status == "lädt" {
+			busy = true
+		}
+	}
+	list := d.clones
+	if !busy {
+		d.clones = nil
+	}
+	d.mu.Unlock()
+	if busy {
+		return
+	}
+	for _, c := range list {
+		for _, ep := range []string{"file/delete", "file/remove"} {
+			var r struct {
+				Status int `json:"status"`
+			}
+			if d.apiJSON(context.Background(), fmt.Sprintf("%s/%s?key=%s&file_code=%s", ddAPI, ep, url.QueryEscape(c[0]), c[1]), &r) == nil && r.Status == 200 {
+				break
+			}
+		}
+	}
 }
 
 // summary: Gesamtfortschritt aller aktiven/wartenden Downloads für den Header
@@ -1265,7 +1319,7 @@ func (d *dlManager) summary() M {
 }
 
 // diagnose prüft einen ddownload-Link Schritt für Schritt und liefert die Rohantworten (ohne Key) zurück.
-func (d *dlManager) diagnose(ctx context.Context, link string) []M {
+func (d *dlManager) diagnose(ctx context.Context, link string, tryClone bool) []M {
 	conf := d.conf()
 	out := []M{}
 	add := func(step string, ok bool, detail string) {
@@ -1317,8 +1371,32 @@ func (d *dlManager) diagnose(ctx context.Context, link string) []M {
 			add("API "+ep, ok, fmt.Sprintf("HTTP %d: %s", st, mask(cut(body, 400))))
 		}
 	}
+	if tryClone && conf.DDKey != "" {
+		st, body, err := raw(fmt.Sprintf("%s/file/clone?key=%s&file_code=%s", ddAPI, url.QueryEscape(conf.DDKey), code))
+		if err != nil {
+			add("API file/clone", false, mask(err.Error()))
+		} else {
+			add("API file/clone", st == 200 && regexp.MustCompile(`"status"\s*:\s*200`).MatchString(body), fmt.Sprintf("HTTP %d: %s", st, mask(cut(body, 400))))
+			var cl struct {
+				Result map[string]any `json:"result"`
+			}
+			json.Unmarshal([]byte(body), &cl)
+			if nc := cloneCode(cl.Result); nc != "" && nc != code {
+				st2, b2, err2 := raw(fmt.Sprintf("%s/file/direct_link?key=%s&file_code=%s", ddAPI, url.QueryEscape(conf.DDKey), nc))
+				if err2 != nil {
+					add("API direct_link (Klon)", false, mask(err2.Error()))
+				} else {
+					add("API direct_link (Klon)", st2 == 200 && strings.Contains(b2, "http"), fmt.Sprintf("HTTP %d: %s", st2, mask(cut(b2, 300))))
+				}
+				d.ddDeleteClone(ctx, conf.DDKey, nc, code)
+				add("Klon aufräumen", true, "Der Klon "+nc+" wird nach dem Test wieder gelöscht (falls die API das zulässt).")
+			} else {
+				add("Klon-Code", false, "In der Antwort wurde kein Datei-Code des Klons gefunden.")
+			}
+		}
+	}
 	if conf.DDLogin == "" || conf.DDPass == "" {
-		add("Login-Weg", false, "Kein Benutzername/Passwort hinterlegt.")
+		add("Login-Weg", false, "Kein Benutzername/Passwort hinterlegt. Ohne Login geht es nur, wenn der Klon-Weg klappt.")
 		return out
 	}
 	u, _ := url.Parse(ddBase)
