@@ -77,3 +77,32 @@ chrome.runtime.onMessage.addListener((msg, _s, reply) => {
   if (msg.type === "reload") applyRules().then(() => reply({ ok: true }));
   return true;
 });
+
+
+// ddownload-Cookies (Login hat ein Captcha) aus dem Browser an MediaButler schicken
+const CK_HOSTS = ["ddownload.com"];
+let ckTimer = null;
+
+async function sendCookies(notifyOk) {
+  const c = await cfg();
+  if (!c.server) { if (notifyOk) notify("MediaButler", "Bitte zuerst die Server-Adresse eintragen."); return; }
+  const headers = { "Content-Type": "application/json", ...Object.fromEntries(authHeaders(c).map(h => [h.header, h.value])) };
+  for (const host of CK_HOSTS) {
+    const list = await chrome.cookies.getAll({ domain: host });
+    if (!list.some(k => k.name === "xfss" || k.name === "login")) { if (notifyOk) notify("MediaButler", "Bei " + host + " nicht angemeldet."); continue; }
+    const hdr = list.map(k => k.name + "=" + k.value).join("; ");
+    try {
+      const r = await fetch(c.server + "/api/dl/cookies", { method: "POST", headers, body: JSON.stringify({ host, cookies: hdr }) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (notifyOk) notify("MediaButler", "Cookies von " + host + " gesendet.");
+    } catch (e) { if (notifyOk) notify("MediaButler: Fehler", String(e.message || e)); }
+  }
+}
+
+chrome.cookies.onChanged.addListener(ch => {
+  if (!CK_HOSTS.some(h => (ch.cookie.domain || "").replace(/^\./, "").endsWith(h))) return;
+  clearTimeout(ckTimer);
+  ckTimer = setTimeout(() => sendCookies(false), 5000);
+});
+
+chrome.runtime.onMessage.addListener(msg => { if (msg && msg.type === "sendCookies") sendCookies(true); });

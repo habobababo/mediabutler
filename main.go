@@ -56,7 +56,7 @@ func eq(x, y string) bool { return subtle.ConstantTimeCompare([]byte(x), []byte(
 func (a *App) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.pass == "" || publicPaths[r.URL.Path] ||
-			(a.apiKey != "" && (r.URL.Path == "/api/hook" || r.URL.Path == "/api/dl/add" || strings.HasPrefix(r.URL.Path, "/api/cnl")) && eq(r.Header.Get("X-API-Key"), a.apiKey)) ||
+			(a.apiKey != "" && (r.URL.Path == "/api/hook" || r.URL.Path == "/api/dl/add" || r.URL.Path == "/api/dl/cookies" || strings.HasPrefix(r.URL.Path, "/api/cnl")) && eq(r.Header.Get("X-API-Key"), a.apiKey)) ||
 			(r.Method == "OPTIONS" && strings.HasPrefix(r.URL.Path, "/api/cnl")) {
 			next.ServeHTTP(w, r)
 			return

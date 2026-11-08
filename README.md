@@ -36,3 +36,7 @@ Neuer Bereich „Downloads": HTTP/HTTPS-Links und ddownload.com (Premium per API
 - **Cookies** (Hoster-Login) werden dauerhaft in `cookies.json` im Datenordner gespeichert. Zusätzlich lässt sich ein Cookie-Header aus dem Browser einfügen.
 - **Click'n'Load**: Port `9666` veröffentlichen (`CNL_PORT`, `0` schaltet ihn ab) oder das Chrome-Plugin in `chrome-extension/` nutzen (Chrome → Erweiterungen → Entwicklermodus → „Entpackte Erweiterung laden"). Das Plugin leitet `127.0.0.1:9666` auf den Server um und bietet „An MediaButler senden" im Kontextmenü. Server-Adresse und `API_KEY` im Plugin eintragen.
 - Testumgebung: `DDL_BASE` und `DDL_API` überschreiben die ddownload-Adressen.
+
+### ddownload (Premium)
+
+Die API liefert Direktlinks nur für eigene Dateien. Für fremde Links nutzt MediaButler wie pyLoad die Web-Anmeldung. Weil der Login ein Captcha hat, kommt die Sitzung aus dem Browser: Chrome-Plugin installieren, bei ddownload.com anmelden, die Cookies werden automatisch gesendet (oder per Button „Cookies senden“). Alternativ den Cookie-Header unter Einstellungen → Downloads einfügen. Die Cookies werden dauerhaft gespeichert. „Testen“ in den Einstellungen zeigt jeden Schritt.

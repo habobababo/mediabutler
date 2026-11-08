@@ -67,7 +67,6 @@ type dlManager struct {
 	pkgDone map[string]bool
 	opt     []string
 	acc     []M
-	clones  [][2]string
 	accT    time.Time
 }
 
@@ -353,145 +352,11 @@ func (d *dlManager) get(ctx context.Context, c *http.Client, u string) (*http.Re
 	return c.Do(req)
 }
 
-func (d *dlManager) ddLogin(ctx context.Context, conf DLConf) error {
-	if conf.DDLogin == "" || conf.DDPass == "" {
-		return fmt.Errorf("Kein ddownload-Login hinterlegt.")
-	}
-	form := url.Values{"op": {"login"}, "redirect": {""}, "login": {conf.DDLogin}, "password": {conf.DDPass}}
-	req, _ := http.NewRequestWithContext(ctx, "POST", ddBase+"/", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) MediaButler")
-	resp, err := d.noRedir.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	u, _ := url.Parse(ddBase)
-	for _, c := range d.jar.Cookies(u) {
-		if c.Name == "xfss" {
-			return nil
-		}
-	}
-	return fmt.Errorf("ddownload-Login fehlgeschlagen. Zugangsdaten prüfen.")
-}
-
 var (
 	reDirect = regexp.MustCompile(`https?://[\w.\-]+(?::\d+)?/d/[\w\-]+/[^"'\s<>]+`)
 	reInput  = regexp.MustCompile(`(?is)<input[^>]*>`)
 	reAttr   = regexp.MustCompile(`(?is)(name|value)\s*=\s*["']([^"']*)["']`)
 )
-
-func (d *dlManager) resolveDD(ctx context.Context, it *DLItem, conf DLConf) (*resolved, error) {
-	pu, _ := url.Parse(it.URL)
-	m := reDDCode.FindStringSubmatch(pu.Path)
-	if m == nil {
-		return nil, fmt.Errorf("Datei-Code in der ddownload-URL nicht erkannt.")
-	}
-	code := m[1]
-	var errs []string
-	if conf.DDKey != "" {
-		r, err := d.ddViaAPI(ctx, conf.DDKey, code)
-		if err == nil {
-			return r, nil
-		}
-		errs = append(errs, err.Error())
-		// Datei gehört nicht zum eigenen Account ("No file"): erst Klon im eigenen Account, dann Login-Weg
-		cr, err2 := d.ddViaClone(ctx, conf.DDKey, code)
-		if err2 == nil {
-			return cr, nil
-		}
-		errs = append(errs, "Klon: "+err2.Error())
-	}
-	if conf.DDLogin != "" && conf.DDPass != "" || conf.DDKey == "" {
-		r, err := d.ddViaWeb(ctx, code, conf)
-		if err == nil {
-			return r, nil
-		}
-		errs = append(errs, "Login-Weg: "+err.Error())
-	} else {
-		errs = append(errs, "kein Login hinterlegt")
-	}
-	return nil, fmt.Errorf("%s", strings.Join(errs, " | "))
-}
-
-func (d *dlManager) ddViaWeb(ctx context.Context, code string, conf DLConf) (*resolved, error) {
-	// Login/Cookies: Seite laden, Direktlink suchen
-	u, _ := url.Parse(ddBase)
-	has := false
-	for _, c := range d.jar.Cookies(u) {
-		if c.Name == "xfss" || c.Name == "login" {
-			has = true
-		}
-	}
-	if !has {
-		if err := d.ddLogin(ctx, conf); err != nil {
-			return nil, err
-		}
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		page := ddBase + "/" + code
-		resp, err := d.get(ctx, d.noRedir, page)
-		if err != nil {
-			return nil, err
-		}
-		if loc := resp.Header.Get("Location"); resp.StatusCode/100 == 3 && loc != "" {
-			resp.Body.Close()
-			if lu, err := url.Parse(loc); err == nil && reDirect.MatchString(lu.String()) || strings.Contains(loc, "/d/") {
-				return &resolved{url: loc}, nil
-			}
-		}
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		resp.Body.Close()
-		txt := string(b)
-		if mm := reDirect.FindString(txt); mm != "" {
-			return &resolved{url: html.UnescapeString(mm)}, nil
-		}
-		// Formular download2 absenden
-		if strings.Contains(txt, "download2") || strings.Contains(txt, "method_premium") {
-			form := url.Values{}
-			for _, in := range reInput.FindAllString(txt, -1) {
-				nm, val := "", ""
-				for _, at := range reAttr.FindAllStringSubmatch(in, -1) {
-					if strings.EqualFold(at[1], "name") {
-						nm = at[2]
-					} else {
-						val = at[2]
-					}
-				}
-				if nm != "" {
-					form.Set(nm, val)
-				}
-			}
-			form.Set("op", "download2")
-			form.Set("method_premium", "1")
-			req, _ := http.NewRequestWithContext(ctx, "POST", page, strings.NewReader(form.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) MediaButler")
-			req.Header.Set("Referer", page)
-			r2, err := d.noRedir.Do(req)
-			if err != nil {
-				return nil, err
-			}
-			if loc := r2.Header.Get("Location"); loc != "" {
-				r2.Body.Close()
-				return &resolved{url: loc}, nil
-			}
-			b2, _ := io.ReadAll(io.LimitReader(r2.Body, 2<<20))
-			r2.Body.Close()
-			if mm := reDirect.FindString(string(b2)); mm != "" {
-				return &resolved{url: html.UnescapeString(mm)}, nil
-			}
-		}
-		if attempt == 0 && conf.DDLogin != "" { // Session abgelaufen -> neu einloggen
-			d.jar.clear(strings.TrimPrefix(u.Hostname(), "www."))
-			if err := d.ddLogin(ctx, conf); err != nil {
-				return nil, err
-			}
-			continue
-		}
-	}
-	return nil, fmt.Errorf("Kein Premium-Direktlink gefunden. Account oder API-Key prüfen.")
-}
 
 func (d *dlManager) apiJSON(ctx context.Context, u string, v any) error {
 	resp, err := d.get(ctx, d.noRedir, u)
@@ -527,7 +392,6 @@ func (d *dlManager) loop() {
 		case <-d.wake:
 		case <-t.C:
 		}
-		d.ddCleanClones()
 		d.mu.Lock()
 		running := 0
 		for _, it := range d.f.Items {
@@ -1077,8 +941,32 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 	post("/api/dl/diagnose", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
+		js(w, 200, M{"steps": d.diagnose(ctx, str(body(r)["url"]))})
+	})
+	// Cookies aus dem Browser (Chrome-Plugin) dauerhaft speichern
+	post("/api/dl/cookies", func(w http.ResponseWriter, r *http.Request) {
 		b := body(r)
-		js(w, 200, M{"steps": d.diagnose(ctx, str(b["url"]), b["clone"] == true)})
+		host := strings.ToLower(strings.TrimSpace(str(b["host"])))
+		hdr := strings.TrimSpace(str(b["cookies"]))
+		if host == "" || hdr == "" {
+			js(w, 400, M{"error": "Host und Cookies angeben."})
+			return
+		}
+		c := d.conf()
+		old := DLConf{}
+		d.a.load("dl_conf.json", &old)
+		c.Cookies = old.Cookies
+		if c.Cookies == nil {
+			c.Cookies = map[string]string{}
+		}
+		c.Cookies[host] = hdr
+		c.Dir = old.Dir
+		d.a.save("dl_conf.json", c)
+		d.jar.importHeader(host, hdr)
+		d.mu.Lock()
+		d.acc = nil
+		d.mu.Unlock()
+		js(w, 200, M{"ok": true})
 	})
 	post("/api/dl/cookies/clear", func(w http.ResponseWriter, r *http.Request) {
 		d.jar.clear(strings.ToLower(str(body(r)["host"])))
@@ -1215,79 +1103,6 @@ func (d *dlManager) ddViaAPI(ctx context.Context, key, code string) (*resolved, 
 	return r, nil
 }
 
-// ddViaClone klont eine fremde Datei in den eigenen Account und holt den Direktlink des Klons.
-func (d *dlManager) ddViaClone(ctx context.Context, key, code string) (*resolved, error) {
-	var cl struct {
-		Status int            `json:"status"`
-		Msg    string         `json:"msg"`
-		Result map[string]any `json:"result"`
-	}
-	if err := d.apiJSON(ctx, fmt.Sprintf("%s/file/clone?key=%s&file_code=%s", ddAPI, url.QueryEscape(key), code), &cl); err != nil {
-		return nil, err
-	}
-	nc := cloneCode(cl.Result)
-	if nc == "" {
-		return nil, fmt.Errorf("Klonen nicht möglich: %s", firstNonEmpty(cl.Msg, "keine Antwort"))
-	}
-	r, err := d.ddViaAPI(ctx, key, nc)
-	d.ddDeleteClone(ctx, key, nc, code)
-	return r, err
-}
-
-func cloneCode(res map[string]any) string {
-	for _, k := range []string{"filecode", "file_code", "code"} {
-		if v, ok := res[k].(string); ok && v != "" {
-			return v
-		}
-	}
-	if u, ok := res["url"].(string); ok {
-		if m := reDDCode.FindStringSubmatch(u); m != nil {
-			return m[1]
-		}
-	}
-	return ""
-}
-
-// ddDeleteClone räumt den angelegten Klon wieder auf (nur den eigenen Klon, nie das Original).
-// Der direkte Link bleibt nach dem Löschen nicht zwingend gültig, daher erst nach dem Start des Downloads aufrufen.
-func (d *dlManager) ddDeleteClone(ctx context.Context, key, clone, orig string) {
-	if clone == "" || clone == orig {
-		return
-	}
-	d.mu.Lock()
-	d.clones = append(d.clones, [2]string{key, clone})
-	d.mu.Unlock()
-}
-
-// ddCleanClones löscht gesammelte Klone, wenn keine Downloads mehr laufen.
-func (d *dlManager) ddCleanClones() {
-	d.mu.Lock()
-	busy := false
-	for _, it := range d.f.Items {
-		if it.Status == "lädt" {
-			busy = true
-		}
-	}
-	list := d.clones
-	if !busy {
-		d.clones = nil
-	}
-	d.mu.Unlock()
-	if busy {
-		return
-	}
-	for _, c := range list {
-		for _, ep := range []string{"file/delete", "file/remove"} {
-			var r struct {
-				Status int `json:"status"`
-			}
-			if d.apiJSON(context.Background(), fmt.Sprintf("%s/%s?key=%s&file_code=%s", ddAPI, ep, url.QueryEscape(c[0]), c[1]), &r) == nil && r.Status == 200 {
-				break
-			}
-		}
-	}
-}
-
 // summary: Gesamtfortschritt aller aktiven/wartenden Downloads für den Header
 func (d *dlManager) summary() M {
 	d.mu.Lock()
@@ -1318,8 +1133,309 @@ func (d *dlManager) summary() M {
 	return M{"active": active, "waiting": waiting, "done": done, "size": size, "speed": speed, "pct": pct, "name": name}
 }
 
-// diagnose prüft einen ddownload-Link Schritt für Schritt und liefert die Rohantworten (ohne Key) zurück.
-func (d *dlManager) diagnose(ctx context.Context, link string, tryClone bool) []M {
+// ---------- ddownload: Ablauf wie im pyLoad-Plugin (XFileSharing) ----------
+
+var (
+	ddUA        = "pyLoad/0.5.0"
+	reDDLink    = regexp.MustCompile(`(?is)(?:file: "(.+?)"|(https?://(?:www\.)?(?:[^/"'\s]*?ddownload\.com|[^/"'\s]*?ddl\.to|\d+\.\d+\.\d+\.\d+)(?::\d+)?(?:/d/|(?:/files)?/\d+/\w+/).+?)["'<])`)
+	reDDForm    = regexp.MustCompile(`(?is)(<form[^>]*>)(.*?)</form>`)
+	reDDInput   = regexp.MustCompile(`(?is)<(input|textarea)([^>]*)>([^<]*)`)
+	reDDAttr    = regexp.MustCompile(`(?is)\b(name|value|action)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	reDDOffline = regexp.MustCompile(`>File Not Found<|>File Deleted<|>\s*\w+ (Not Found|file (was|has been) removed|no longer available)`)
+	reDDLogFail = regexp.MustCompile(`Incorrect Login or Password|account was banned|Error<`)
+	reDDErr     = regexp.MustCompile(`(?is)(?:class=["']err["'].*?>|<[Cc]enter><b>|>Error</td>|>\(ERROR:)(?:\s*<.+?>\s*)*(.+?)(?:["']|<|\))`)
+	reDDUntil   = regexp.MustCompile(`>Active until\s+([\w ]+[0-9]{4})<`)
+)
+
+const ddCaptchaMsg = "Der Login verlangt ein Captcha. Bitte im Browser bei ddownload.com anmelden und die Cookies übernehmen (Chrome-Plugin: Cookies werden automatisch gesendet, oder Cookie-Header unter Einstellungen → Downloads einfügen)."
+
+func ddAttrs(tag string) map[string]string {
+	m := map[string]string{}
+	for _, a := range reDDAttr.FindAllStringSubmatch(tag, -1) {
+		m[strings.ToLower(a[1])] = html.UnescapeString(firstNonEmpty(a[2], a[3]))
+	}
+	return m
+}
+
+// parseForm: wie pyLoad parse_html_form. match prüft Tag/Inputs, "" = erstes Formular.
+func parseForm(page string, match func(tag string, in map[string]string) bool) (string, map[string]string, bool) {
+	page = regexp.MustCompile(`(?s)<!--.*?-->`).ReplaceAllString(page, "")
+	for _, f := range reDDForm.FindAllStringSubmatch(page, -1) {
+		in := map[string]string{}
+		for _, i := range reDDInput.FindAllStringSubmatch(f[2], -1) {
+			at := ddAttrs(i[2])
+			if n := at["name"]; n != "" {
+				v := at["value"]
+				if v == "" {
+					v = strings.TrimSpace(i[3])
+				}
+				in[n] = v
+			}
+		}
+		if match(f[1], in) {
+			return ddAttrs(f[1])["action"], in, true
+		}
+	}
+	return "", nil, false
+}
+
+func (d *dlManager) ddSetLang() {
+	u, _ := url.Parse(ddBase)
+	d.jar.SetCookies(u, []*http.Cookie{{Name: "lang", Value: "english", Path: "/", Domain: u.Hostname(), Expires: time.Now().AddDate(1, 0, 0)}})
+}
+
+func (d *dlManager) ddHasCookie(name string) bool {
+	u, _ := url.Parse(ddBase)
+	for _, c := range d.jar.Cookies(u) {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *dlManager) ddReq(ctx context.Context, method, u string, form url.Values, referer string) (*http.Response, string, error) {
+	var rd io.Reader
+	if form != nil {
+		rd = strings.NewReader(form.Encode())
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("User-Agent", ddUA)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	resp, err := d.noRedir.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	return resp, string(b), nil
+}
+
+// ddSession prüft, ob die gespeicherten Cookies eine angemeldete Sitzung ergeben (wie pyLoad: "op=logout" auf der Seite).
+func (d *dlManager) ddSession(ctx context.Context) (loggedIn bool, until string, err error) {
+	d.ddSetLang()
+	resp, body, err := d.ddReq(ctx, "GET", ddBase+"/?op=my_account", nil, "")
+	if err != nil {
+		return false, "", err
+	}
+	if resp.StatusCode/100 == 3 {
+		return false, "", nil
+	}
+	if !strings.Contains(body, "op=logout") {
+		return false, "", nil
+	}
+	if m := reDDUntil.FindStringSubmatch(body); m != nil {
+		until = m[1]
+	}
+	return true, until, nil
+}
+
+// ddLogin meldet wie das pyLoad-Konto-Plugin an (login.html, Formular "FL"). Bei Captcha geht das nur über Browser-Cookies.
+func (d *dlManager) ddLogin(ctx context.Context, conf DLConf) error {
+	if conf.DDLogin == "" || conf.DDPass == "" {
+		return fmt.Errorf("Kein Login hinterlegt und keine gültigen Cookies vorhanden.")
+	}
+	d.ddSetLang()
+	if ok, _, _ := d.ddSession(ctx); ok {
+		return nil
+	}
+	loginURL := ddBase + "/login.html"
+	_, page, err := d.ddReq(ctx, "GET", loginURL, nil, "")
+	if err != nil {
+		return err
+	}
+	if strings.Contains(page, "op=logout") {
+		return nil
+	}
+	action, inputs, ok := parseForm(page, func(tag string, _ map[string]string) bool {
+		return strings.Contains(tag, `name="FL"`) || strings.Contains(tag, `name='FL'`)
+	})
+	if !ok {
+		inputs = map[string]string{"op": "login", "redirect": ddBase}
+	}
+	if strings.Contains(strings.ToLower(page), "turnstile") || strings.Contains(strings.ToLower(page), "g-recaptcha") || strings.Contains(strings.ToLower(page), "h-captcha") {
+		return fmt.Errorf("%s", ddCaptchaMsg)
+	}
+	inputs["login"], inputs["password"] = conf.DDLogin, conf.DDPass
+	target := loginURL
+	if action != "" {
+		if au, err := url.Parse(action); err == nil {
+			target = (&url.URL{}).ResolveReference(au).String()
+			if bu, err := url.Parse(loginURL); err == nil {
+				target = bu.ResolveReference(au).String()
+			}
+		}
+	}
+	form := url.Values{}
+	for k, v := range inputs {
+		form.Set(k, v)
+	}
+	_, body, err := d.ddReq(ctx, "POST", target, form, loginURL)
+	if err != nil {
+		return err
+	}
+	if m := reDDLogFail.FindString(body); m != "" {
+		return fmt.Errorf("ddownload-Login fehlgeschlagen: %s", strings.Trim(m, "<>"))
+	}
+	if !d.ddHasCookie("xfss") {
+		if strings.Contains(strings.ToLower(body), "turnstile") || strings.Contains(strings.ToLower(body), "captcha") {
+			return fmt.Errorf("%s", ddCaptchaMsg)
+		}
+		return fmt.Errorf("ddownload-Login fehlgeschlagen. Zugangsdaten prüfen.")
+	}
+	return nil
+}
+
+func (d *dlManager) resolveDD(ctx context.Context, it *DLItem, conf DLConf) (*resolved, error) {
+	pu, _ := url.Parse(it.URL)
+	m := reDDCode.FindStringSubmatch(pu.Path)
+	if m == nil {
+		return nil, fmt.Errorf("Datei-Code in der ddownload-URL nicht erkannt.")
+	}
+	code := m[1]
+	var errs []string
+	if conf.DDKey != "" {
+		// Die API liefert Direktlinks nur für eigene Dateien, klappt also nicht bei fremden Links.
+		r, err := d.ddViaAPI(ctx, conf.DDKey, code)
+		if err == nil {
+			return r, nil
+		}
+		errs = append(errs, err.Error()+" (die API gilt nur für eigene Dateien)")
+	}
+	r, err := d.ddViaWeb(ctx, code, conf)
+	if err == nil {
+		if r.name == "" || r.size == 0 {
+			d.ddFillInfo(ctx, conf, code, r)
+		}
+		return r, nil
+	}
+	errs = append(errs, err.Error())
+	return nil, fmt.Errorf("%s", strings.Join(errs, " | "))
+}
+
+// ddFillInfo holt Dateiname und Größe über file/info (funktioniert für beliebige Dateien).
+func (d *dlManager) ddFillInfo(ctx context.Context, conf DLConf, code string, r *resolved) {
+	if conf.DDKey == "" {
+		return
+	}
+	var info struct {
+		Result []struct {
+			Name string
+			Size any
+		} `json:"result"`
+	}
+	if d.apiJSON(ctx, fmt.Sprintf("%s/file/info?key=%s&file_code=%s", ddAPI, url.QueryEscape(conf.DDKey), code), &info) == nil && len(info.Result) > 0 {
+		if r.name == "" {
+			r.name = info.Result[0].Name
+		}
+		if r.size == 0 {
+			r.size = anyInt(info.Result[0].Size)
+		}
+	}
+}
+
+// ddViaWeb: Premium-Download wie im pyLoad-XFSDownloader (Seite -> Formular op=download* mit method_premium -> Link).
+func (d *dlManager) ddViaWeb(ctx context.Context, code string, conf DLConf) (*resolved, error) {
+	d.ddSetLang()
+	if !d.ddHasCookie("xfss") {
+		if err := d.ddLogin(ctx, conf); err != nil {
+			return nil, err
+		}
+	}
+	page := ddBase + "/" + code
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, data, err := d.ddReq(ctx, "GET", page, nil, "")
+		if err != nil {
+			return nil, err
+		}
+		if loc := resp.Header.Get("Location"); resp.StatusCode/100 == 3 && loc != "" && !strings.Contains(loc, "op=") && !strings.Contains(loc, "login") {
+			return &resolved{url: absURL(page, loc)}, nil
+		}
+		if !strings.Contains(data, "op=logout") && !strings.Contains(data, `"/d/`) && attempt == 0 && (strings.Contains(data, `name="FL"`) || strings.Contains(data, "op=login")) {
+			// Sitzung abgelaufen
+			d.jar.clear(strings.TrimPrefix(mustHost(ddBase), "www."))
+			if err := d.ddLogin(ctx, conf); err != nil {
+				return nil, fmt.Errorf("Sitzung abgelaufen. %s", err.Error())
+			}
+			continue
+		}
+		for i := 0; i < 5; i++ {
+			if reDDOffline.MatchString(data) {
+				return nil, fmt.Errorf("Die Datei existiert bei ddownload nicht mehr.")
+			}
+			if strings.Contains(data, ">This file is available for Premium Users only") {
+				return nil, fmt.Errorf("Die Datei ist nur für Premium. Die Sitzung ist nicht als Premium angemeldet: Cookies erneuern.")
+			}
+			if lm := reDDLink.FindStringSubmatch(data); lm != nil {
+				return &resolved{url: html.UnescapeString(firstNonEmpty(lm[1], lm[2]))}, nil
+			}
+			_, inputs, ok := parseForm(data, func(_ string, in map[string]string) bool {
+				return regexp.MustCompile(`^download`).MatchString(in["op"])
+			})
+			if !ok {
+				_, inputs, ok = parseForm(data, func(tag string, _ map[string]string) bool { return strings.Contains(tag, "F1") })
+			}
+			if !ok {
+				msg := "Kein Download-Formular auf der Seite gefunden."
+				if e := reDDErr.FindStringSubmatch(data); e != nil {
+					msg = strings.TrimSpace(e[1])
+				}
+				return nil, fmt.Errorf("%s", msg)
+			}
+			if _, has := inputs["op"]; has {
+				if inputs["referer"] == "" {
+					inputs["referer"] = page
+				}
+			} else {
+				inputs["referer"] = page
+			}
+			inputs["method_premium"] = "Premium Download"
+			delete(inputs, "method_free")
+			form := url.Values{}
+			for k, v := range inputs {
+				form.Set(k, v)
+			}
+			r2, body, err := d.ddReq(ctx, "POST", page, form, page)
+			if err != nil {
+				return nil, err
+			}
+			if loc := r2.Header.Get("Location"); loc != "" && !strings.Contains(loc, "op=") {
+				return &resolved{url: absURL(page, loc)}, nil
+			}
+			data = body
+		}
+		return nil, fmt.Errorf("Zu viele Schritte ohne Direktlink (Captcha oder kein Premium?).")
+	}
+	return nil, fmt.Errorf("Kein Premium-Direktlink gefunden. Cookies erneuern.")
+}
+
+func absURL(base, ref string) string {
+	b, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return b.ResolveReference(r).String()
+}
+
+func mustHost(u string) string {
+	pu, _ := url.Parse(u)
+	return pu.Hostname()
+}
+
+// diagnose prüft einen ddownload-Link Schritt für Schritt und liefert die Rohantworten (ohne Key).
+func (d *dlManager) diagnose(ctx context.Context, link string) []M {
 	conf := d.conf()
 	out := []M{}
 	add := func(step string, ok bool, detail string) {
@@ -1339,7 +1455,7 @@ func (d *dlManager) diagnose(ctx context.Context, link string, tryClone bool) []
 		return s
 	}
 	pu, err := url.Parse(strings.TrimSpace(link))
-	m := []string(nil)
+	var m []string
 	if err == nil {
 		m = reDDCode.FindStringSubmatch(pu.Path)
 	}
@@ -1349,102 +1465,87 @@ func (d *dlManager) diagnose(ctx context.Context, link string, tryClone bool) []
 	}
 	code := m[1]
 	add("Datei-Code", true, code)
-	raw := func(u string) (int, string, error) {
-		resp, err := d.get(ctx, d.noRedir, u)
-		if err != nil {
-			return 0, "", err
-		}
-		defer resp.Body.Close()
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return resp.StatusCode, string(b), nil
-	}
-	if conf.DDKey == "" {
-		add("API-Key", false, "Kein API-Key hinterlegt, nur der Login-Weg wird geprüft.")
-	} else {
+	if conf.DDKey != "" {
 		for _, ep := range []string{"file/info", "file/direct_link"} {
-			st, body, err := raw(fmt.Sprintf("%s/%s?key=%s&file_code=%s", ddAPI, ep, url.QueryEscape(conf.DDKey), code))
+			resp, err := d.get(ctx, d.noRedir, fmt.Sprintf("%s/%s?key=%s&file_code=%s", ddAPI, ep, url.QueryEscape(conf.DDKey), code))
 			if err != nil {
 				add("API "+ep, false, mask(err.Error()))
 				continue
 			}
-			ok := st == 200 && regexp.MustCompile(`"status"\s*:\s*200`).MatchString(body)
-			add("API "+ep, ok, fmt.Sprintf("HTTP %d: %s", st, mask(cut(body, 400))))
-		}
-	}
-	if tryClone && conf.DDKey != "" {
-		st, body, err := raw(fmt.Sprintf("%s/file/clone?key=%s&file_code=%s", ddAPI, url.QueryEscape(conf.DDKey), code))
-		if err != nil {
-			add("API file/clone", false, mask(err.Error()))
-		} else {
-			add("API file/clone", st == 200 && regexp.MustCompile(`"status"\s*:\s*200`).MatchString(body), fmt.Sprintf("HTTP %d: %s", st, mask(cut(body, 400))))
-			var cl struct {
-				Result map[string]any `json:"result"`
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			resp.Body.Close()
+			ok := resp.StatusCode == 200 && regexp.MustCompile(`"status"\s*:\s*200`).Match(b)
+			detail := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, mask(cut(string(b), 400)))
+			if ep == "file/direct_link" && !ok {
+				detail += "  (normal bei fremden Dateien, der Download läuft dann über die Cookies)"
 			}
-			json.Unmarshal([]byte(body), &cl)
-			if nc := cloneCode(cl.Result); nc != "" && nc != code {
-				st2, b2, err2 := raw(fmt.Sprintf("%s/file/direct_link?key=%s&file_code=%s", ddAPI, url.QueryEscape(conf.DDKey), nc))
-				if err2 != nil {
-					add("API direct_link (Klon)", false, mask(err2.Error()))
-				} else {
-					add("API direct_link (Klon)", st2 == 200 && strings.Contains(b2, "http"), fmt.Sprintf("HTTP %d: %s", st2, mask(cut(b2, 300))))
-				}
-				d.ddDeleteClone(ctx, conf.DDKey, nc, code)
-				add("Klon aufräumen", true, "Der Klon "+nc+" wird nach dem Test wieder gelöscht (falls die API das zulässt).")
-			} else {
-				add("Klon-Code", false, "In der Antwort wurde kein Datei-Code des Klons gefunden.")
-			}
+			add("API "+ep, ok, detail)
 		}
 	}
-	if conf.DDLogin == "" || conf.DDPass == "" {
-		add("Login-Weg", false, "Kein Benutzername/Passwort hinterlegt. Ohne Login geht es nur, wenn der Klon-Weg klappt.")
-		return out
+	for _, c := range d.cookieNames() {
+		_ = c
 	}
-	u, _ := url.Parse(ddBase)
-	hasCookie := false
-	for _, c := range d.jar.Cookies(u) {
-		if c.Name == "xfss" {
-			hasCookie = true
-		}
+	add("Gespeicherte Cookies", d.ddHasCookie("xfss") || d.ddHasCookie("login"), "Namen: "+strings.Join(d.cookieNames(), ", "))
+	in, until, err := d.ddSession(ctx)
+	switch {
+	case err != nil:
+		add("Sitzung", false, err.Error())
+	case in:
+		add("Sitzung", true, "angemeldet"+map[bool]string{true: ", Premium bis " + until, false: ""}[until != ""])
+	default:
+		add("Sitzung", false, "nicht angemeldet. Cookies fehlen oder sind abgelaufen.")
 	}
-	if !hasCookie {
+	if !in && conf.DDLogin != "" && conf.DDPass != "" {
 		if err := d.ddLogin(ctx, conf); err != nil {
 			add("Login", false, err.Error())
-			return out
+		} else {
+			add("Login", true, "angemeldet, Cookies gespeichert")
 		}
-		add("Login", true, "angemeldet, Cookie gespeichert")
-	} else {
-		add("Login", true, "gespeicherter Cookie vorhanden")
 	}
-	resp, err := d.get(ctx, d.noRedir, ddBase+"/"+code)
+	resp, data, err := d.ddReq(ctx, "GET", ddBase+"/"+code, nil, "")
 	if err != nil {
 		add("Seite laden", false, err.Error())
 		return out
 	}
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	resp.Body.Close()
-	txt := string(b)
 	title := ""
-	if mm := regexp.MustCompile(`(?is)<title>(.*?)</title>`).FindStringSubmatch(txt); mm != nil {
+	if mm := regexp.MustCompile(`(?is)<title>(.*?)</title>`).FindStringSubmatch(data); mm != nil {
 		title = cut(html.UnescapeString(mm[1]), 120)
 	}
 	marks := []string{}
-	for _, k := range []string{"download2", "method_premium", "/d/", "Cloudflare", "captcha", "File Not Found", "No such file", "login", "Premium"} {
-		if strings.Contains(txt, k) {
+	for _, k := range []string{"op=logout", "download1", "download2", "method_premium", "/d/", "Cloudflare", "turnstile", "captcha", "File Not Found", "Premium Users only"} {
+		if strings.Contains(data, k) {
 			marks = append(marks, k)
 		}
 	}
 	add("Seite laden", resp.StatusCode < 400, fmt.Sprintf("HTTP %d, Location: %q, Titel: %q, enthält: %s", resp.StatusCode, resp.Header.Get("Location"), title, strings.Join(marks, ", ")))
 	if r, err := d.ddViaWeb(ctx, code, conf); err != nil {
-		add("Direktlink über Login", false, err.Error())
+		add("Direktlink", false, err.Error())
 	} else {
-		add("Direktlink über Login", true, "Link gefunden: "+cut(reDirectHost(r.url), 80))
+		host := "ok"
+		if pu, err := url.Parse(r.url); err == nil {
+			host = pu.Scheme + "://" + pu.Host + "/…"
+		}
+		add("Direktlink", true, "gefunden: "+host)
 	}
 	return out
 }
 
-func reDirectHost(u string) string {
-	if pu, err := url.Parse(u); err == nil {
-		return pu.Scheme + "://" + pu.Host + "/…"
+func (j *persistJar) names(host string) []string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	var out []string
+	for dom, l := range j.m {
+		if dom != host && !strings.HasSuffix(host, "."+dom) {
+			continue
+		}
+		for _, c := range l {
+			if c.Expires.After(time.Now()) {
+				out = append(out, c.Name)
+			}
+		}
 	}
-	return "ok"
+	sort.Strings(out)
+	return out
 }
+
+func (d *dlManager) cookieNames() []string { return d.jar.names(mustHost(ddBase)) }

@@ -8,3 +8,5 @@ $("send").onclick = () => {
   const links = ($("links").value.match(/https?:\/\/[^\s"'<>]+/g) || []);
   chrome.runtime.sendMessage({ type: "send", links }, () => { $("links").value = ""; $("m").textContent = "Gesendet."; });
 };
+
+$("ck").onclick = () => chrome.runtime.sendMessage({ type: "sendCookies" });

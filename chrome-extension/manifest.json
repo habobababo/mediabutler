@@ -3,7 +3,7 @@
   "name": "MediaButler Downloads",
   "version": "1.0.0",
   "description": "Schickt Links und Click'n'Load an deinen MediaButler-Server.",
-  "permissions": ["contextMenus", "storage", "declarativeNetRequest", "notifications"],
+  "permissions": ["contextMenus", "storage", "declarativeNetRequest", "notifications", "cookies"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "MediaButler" }
