@@ -300,6 +300,50 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 .mpick{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 0}.mres{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:260px;overflow:auto}
 .mhit{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;padding:9px 12px;border-radius:12px;width:100%}.mhit .sub{font-size:12.5px;line-height:1.35}
 .mon{display:flex;gap:10px;align-items:center;margin:6px 0}
+
+/* ===== Überarbeitung: Kopfbereich, Navigation, Ruhe ===== */
+.hero{display:grid;grid-template-columns:1fr auto;gap:16px 24px;align-items:center;padding:18px 22px;border-radius:18px;margin-bottom:18px;
+ background:radial-gradient(900px 220px at 0% 0%,rgba(139,212,156,.16),transparent 60%),radial-gradient(700px 220px at 100% 100%,rgba(143,184,255,.12),transparent 60%),var(--surface);
+ border:1px solid color-mix(in srgb,var(--brand) 22%,var(--line));box-shadow:0 8px 30px rgba(0,0,0,.28)}
+.hero .brand{grid-column:1;gap:14px}
+.hero .logo{width:52px;height:52px;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+.hero h1{font-size:24px;letter-spacing:-.02em}
+.hero .claim{font-size:13px;margin-top:1px}
+.hero .ver{top:8px;right:14px;opacity:.6}
+.hero .stats{grid-column:2;grid-row:1;gap:8px}
+.hero .stat{flex-direction:column;align-items:center;min-width:84px;padding:8px 14px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid var(--line);text-align:center}
+.hero .stat b{font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.05}
+.hero .stat span{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.s-ready b{color:var(--c-Serien)}.s-hist b{color:var(--ok)}.s-clar b{color:var(--warn)}
+.hero .stat.alert{background:var(--brand);border-color:var(--brand)}.hero .stat.alert b,.hero .stat.alert span{color:var(--brand-ink)}
+.hero .strip{grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.hero .hprog,.hero .disk{grid-column:auto;max-width:none;background:rgba(0,0,0,.22);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px}
+.hero .hprog{gap:8px}
+.hero .disk{opacity:1}
+.hp .dbar,.disk .dbar{height:8px}
+.hp .drow,.disk .drow{margin-bottom:6px}
+@media (max-width:760px){
+ .hero{grid-template-columns:1fr;padding:14px;gap:12px;border-radius:16px}
+ .hero .stats{grid-column:1;grid-row:auto;display:grid;grid-template-columns:repeat(3,1fr)}
+ .hero .stat{min-width:0;padding:7px 6px}.hero .stat b{font-size:22px}.hero .stat span{font-size:10.5px}
+ .hero .strip{grid-template-columns:1fr}
+ .hero .brand,.hero .ver{display:none}
+ .fq{flex-wrap:nowrap}.fq input{min-width:0;flex:1}.fq #reload{flex:none;padding:0 12px}
+}
+/* Navigation */
+.topbar button[data-v]{border-radius:12px;border:1px solid transparent;background:none}
+.topbar button[data-v]:hover{background:var(--soft)}
+.topbar button[data-v].on,.topbar button[data-v][aria-current=page]{background:linear-gradient(90deg,color-mix(in srgb,var(--brand) 85%,#fff 0%),color-mix(in srgb,var(--brand) 70%,var(--c-Serien)));color:var(--brand-ink);box-shadow:0 3px 12px rgba(139,212,156,.25)}
+.grp{opacity:.7}
+/* Karten und Tabelle ruhiger */
+.card,.tbox,.bulk{border-radius:16px}
+.table{border-radius:16px;overflow:hidden;border:1px solid var(--line)}
+.table thead th{position:sticky;top:0;background:var(--surface);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700}
+.table tbody tr:hover{background:rgba(255,255,255,.025)}
+.chip{background:var(--soft);border:1px solid var(--line)}
+.bulk.series{padding:10px 14px}
+.bulk.series .more{margin-left:4px}
+button.primary{box-shadow:0 3px 12px rgba(139,212,156,.22)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body><main>
 
@@ -324,17 +368,19 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
 
 <header class="hero">
   <span class="ver" title="Version und Prüfsumme der laufenden app.py">{{VERSION}}</span>
-  <div class="brand"><img class="logo" src="/icon-192.png" alt="" width="64" height="64">
+  <div class="brand"><img class="logo" src="/icon-192.png" alt="" width="52" height="52">
     <div><h1>MediaButler</h1><div class="claim">Sortiert, entpackt und serviert deine Medien.</div></div></div>
-  <div class="hprog" id="hprog" aria-live="polite"></div>
-  <div class="disk" id="disk" hidden title="Belegung des Ziel-Speichers">
-    <div class="drow"><span>💾 Speicher</span><b id="disk-txt"></b></div>
-    <div class="dbar"><i id="disk-bar"></i></div>
-  </div>
   <div class="stats">
-    <div class="stat"><span>📦 bereit</span><b id="st-ready">0</b></div>
-    <div class="stat" id="st-clar-box"><span>❓ brauchen dich</span><b id="st-clar">0</b></div>
-    <div class="stat"><span>✅ verschoben</span><b id="st-hist">0</b></div>
+    <div class="stat s-ready"><b id="st-ready">0</b><span>bereit</span></div>
+    <div class="stat s-clar" id="st-clar-box"><b id="st-clar">0</b><span>brauchen dich</span></div>
+    <div class="stat s-hist"><b id="st-hist">0</b><span>verschoben</span></div>
+  </div>
+  <div class="strip">
+    <div class="hprog" id="hprog" aria-live="polite"></div>
+    <div class="disk" id="disk" hidden title="Belegung des Ziel-Speichers">
+      <div class="drow"><span>💾 Speicher</span><b id="disk-txt"></b></div>
+      <div class="dbar"><i id="disk-bar"></i></div>
+    </div>
   </div>
 </header>
 <div id="warn"></div>
@@ -422,7 +468,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <div class="bar" id="dlgbar" hidden><button class="primary" id="dlmerge"></button><button id="dlsel0">Auswahl aufheben</button></div>
   <div id="dlpk"></div>
   <div id="dlhist" class="card wide" hidden></div>
-  <div id="dlempty" class="empty card wide" hidden><div class="big">⬇️</div><b>Keine Downloads</b>Links oben einfügen oder per Click'n'Load aus dem Browser senden.</div>
+  <div id="dlempty" class="empty card wide" hidden><div class="big">⬇️</div><b>Keine Downloads</b>Links unten einfügen oder per Click'n'Load aus dem Browser senden.</div>
   <div class="card wide">
     <header><span class="ico">⬇️</span><div><h2>Links hinzufügen</h2><p class="sub">Einen oder mehrere Links einfügen (HTTP, HTTPS, ddownload.com). Teile wie <code>.part01.rar</code> werden automatisch zu einem Paket gruppiert.</p></div></header>
     <textarea id="dlin" rows="4" class="mono" placeholder="https://ddownload.com/…&#10;https://…" style="width:100%"></textarea>
@@ -904,7 +950,10 @@ function seriesBar(){
     const c=Object.entries(e.cats).sort((a,b)=>b[1]-a[1])[0][0];
     const gp=gaps(e.files).bad.length?" · ⚠ Lücke":"";
     return `<button class="chip" data-s="${i}"><b>${esc(n)}</b> <small>${e.files.length} · ${c==="?"?"❓ unklar":ICON[c]+" "+c}${gp}</small></button>`}).join("");
-  $("schips").querySelectorAll("button").forEach(b=>b.onclick=()=>openSeries(seriesList[b.dataset.s]))}
+  const sc=$("schips");sc.querySelectorAll("button[data-s]").forEach(b=>b.onclick=()=>openSeries(seriesList[b.dataset.s]));
+  const all=[...sc.querySelectorAll("button[data-s]")];
+  if(all.length>6){const rest=all.slice(6);const t=document.createElement("button");t.className="chip more";let open=false;
+    const upd=()=>{rest.forEach(x=>x.hidden=!open);t.textContent=open?"weniger":`+${rest.length} weitere`};t.onclick=()=>{open=!open;upd()};upd();sc.appendChild(t)}}
 let seriesList=[],curSeries=null,ptm,library={};
 const rng=a=>{const o=[];for(let i=0;i<a.length;){let j=i;while(j+1<a.length&&a[j+1]===a[j]+1)j++;o.push(i===j?`E${String(a[i]).padStart(2,"0")}`:`E${String(a[i]).padStart(2,"0")}–E${String(a[j]).padStart(2,"0")}`);i=j+1}return o.join(", ")};
 const showDir=t=>{const p=t.split("/"),i=p.findIndex(x=>/^Season \d+$/.test(x));return(i>1?p.slice(0,i):p.slice(0,2)).join("/")};
