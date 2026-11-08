@@ -507,11 +507,20 @@ func (a *App) announceNew(items []item) {
 	if len(items) > 6 {
 		names = append(names, fmt.Sprintf("… und %d weitere", len(items)-6))
 	}
+	dups := 0
+	for _, it := range items {
+		if m := a.libMatch(it.dst, a.srcSize(it.src), 1); m != nil && m["n"].(int) > 0 {
+			dups++
+		}
+	}
 	when := "⏰ Zeitplan ist aus, bitte manuell starten"
 	if n := a.scheduleNext(); a.cfg().Enabled && n != "" {
 		when = "⏰ Nächster Lauf: " + n
 	}
 	txt := fmt.Sprintf("📥 MediaButler: %d neue Datei(en) bereit (%s)\n%s\n%s\n%s", len(items), hsize(float64(size)), countCats(dsts), strings.Join(names, "\n"), when)
+	if dups > 0 {
+		txt += fmt.Sprintf("\n🔁 %d davon gibt es schon (oder ähnlich) in der Bibliothek", dups)
+	}
 	txt += a.linkLine("sort")
 	a.notifyW(txt, "tg_new", true, false)
 }

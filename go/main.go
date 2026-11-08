@@ -32,6 +32,7 @@ func main() {
 		user: env("AUTH_USER", "admin"), pass: env("AUTH_PASS", ""), apiKey: env("API_KEY", ""), version: version}
 	a.qcond = sync.NewCond(&a.qmu)
 	a.ex = &exState{m: map[string]*exEntry{}}
+	a.dp, a.an, a.lib = &dupState{}, &anState{Scope: "target"}, &libIndex{memo: map[string]M{}}
 	a.alerts, a.scanPath = map[string]bool{}, map[string]bool{}
 	go a.queueWorker()
 	go a.scheduler()
@@ -121,16 +122,16 @@ func (a *App) routes() http.Handler {
 	notYet := func(w http.ResponseWriter, r *http.Request) {
 		js(w, 501, M{"error": "In der Go-Version noch nicht verfügbar."})
 	}
-	for _, p := range []string{"/api/dupes", "/api/update", "/api/meta", "/api/analysis/status", "/api/analysis/results"} {
+	for _, p := range []string{"/api/update", "/api/meta"} {
 		get(p, notYet)
 	}
-	for _, p := range []string{"/api/analysis/start", "/api/analysis/cancel", "/api/dupes/start",
-		"/api/dupes/cancel", "/api/dupes/delete", "/api/update/config", "/api/update/check", "/api/update/install", "/api/update/rollback",
+	for _, p := range []string{"/api/update/config", "/api/update/check", "/api/update/install", "/api/update/rollback",
 		"/api/meta/config", "/api/meta/search"} {
 		post(p, notYet)
 	}
 
 	a.exRoutes(get, post)
+	a.dupRoutes(get, post)
 	a.notifyRoutes(post)
 
 	page, _ := webFS.ReadFile("web/page.html")

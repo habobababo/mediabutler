@@ -12,7 +12,7 @@ Ein statisches Binary statt Python + Flask.
 | Kopier-Queue, Cancel, Verlauf, Move-after, Leftovers, Samples | fertig |
 | Zeitplan (Cron), Einstellungen, Speicherbalken, Auth, Icons | fertig |
 | Entpacken (RAR/ZIP/7z, mehrteilig, Passwörter), Hook | fertig (benötigt 7zz) |
-| Duplikate, Analyse | folgt (liefert 501) |
+| Duplikate, Bibliotheks-Abgleich der Neuzugänge, Codec-Analyse | fertig, Gruppen identisch zur Python-Version |
 | Telegram (Meldungen, Wächter, Passwort per Antwort), Jellyfin-Scan | fertig |
 | Metadaten (TMDB/TVDB/AniList/Jikan), Update-Knopf | folgt (liefert 501) |
 

@@ -85,12 +85,23 @@ func (a *App) hFiles(w http.ResponseWriter, r *http.Request) {
 		if si != nil {
 			series = si
 		}
+		cp := a.isCopied(cm, rel)
+		var dup any
+		if !cp && !busy[rel] {
+			sk, src := 0, rel
+			if tgt != "" {
+				sk, src = 1, tgt
+			}
+			if m := a.libMatch(src, st.Size(), sk); m != nil {
+				dup = m
+			}
+		}
 		out = append(out, M{"path": rel, "size": st.Size(), "category": cat, "target": tgt, "series": series,
-			"copied": a.isCopied(cm, rel), "busy": busy[rel], "dup": nil})
+			"copied": cp, "busy": busy[rel], "dup": dup})
 	}
 	ts, _ := os.Stat(a.target)
 	js(w, 200, M{"library": a.libraryEps(shows), "files": out, "categories": categories, "source": a.source, "target": a.target,
-		"target_mounted": ts != nil && ts.IsDir(), "extracting": a.exSummary(), "dupidx": false})
+		"target_mounted": ts != nil && ts.IsDir(), "extracting": a.exSummary(), "dupidx": a.libReady()})
 }
 
 func (a *App) hRulesSet(w http.ResponseWriter, r *http.Request) {

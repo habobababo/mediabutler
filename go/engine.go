@@ -65,7 +65,10 @@ type App struct {
 	qid     int
 	qcond   *sync.Cond
 
-	ex *exState
+	ex  *exState
+	dp  *dupState
+	an  *anState
+	lib *libIndex
 
 	alerts   map[string]bool
 	marks    []int
@@ -469,6 +472,7 @@ func (a *App) queueWorker() {
 			}
 		}
 		a.active = nil
+		a.libInvalidate()
 		idle := len(a.pending) == 0
 		a.qmu.Unlock()
 		if idle {
