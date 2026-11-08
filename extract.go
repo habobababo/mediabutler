@@ -104,12 +104,12 @@ func exBlocked(rel string, bl []string) bool {
 func (a *App) exSummary() M {
 	a.ex.mu.Lock()
 	defer a.ex.mu.Unlock()
-	n, pw, er, run := 0, 0, 0, false
+	n, pw, er, run, pct, name := 0, 0, 0, false, 0, ""
 	for _, e := range a.ex.m {
 		switch e.State {
 		case "läuft":
 			n++
-			run = true
+			run, pct, name = true, e.Pct, e.Name
 		case "wartet", "unvollständig":
 			n++
 		case "passwort":
@@ -118,7 +118,7 @@ func (a *App) exSummary() M {
 			er++
 		}
 	}
-	return M{"n": n, "pw": pw, "err": er, "running": run, "done": a.ex.done, "total": len(a.ex.m)}
+	return M{"n": n, "pw": pw, "err": er, "running": run, "done": a.ex.done, "total": len(a.ex.m), "pct": pct, "name": name}
 }
 
 type archive struct {

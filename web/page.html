@@ -27,13 +27,17 @@ code,.path,input.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,mon
 .hero .logo{width:64px;height:64px;border-radius:14px;flex:none}
 .hero h1{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0;color:var(--ink)}
 .hero .claim{color:var(--muted);font-size:14px;margin-top:3px}
-.hero .flow{grid-column:1;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hero .hprog{grid-column:1;max-width:620px;display:flex;flex-direction:column;gap:10px}
+.hp .drow{display:flex;justify-content:space-between;gap:12px;margin-bottom:5px;font-size:13.5px}.hp .drow b{font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.hp .dbar{height:10px;border-radius:5px;background:var(--soft);overflow:hidden}.hp .dbar i{display:block;height:100%;border-radius:5px;background:var(--brand);transition:width .4s}
+.hp.live .dbar i{animation:pulse 1.4s ease-in-out infinite}.hp.idle .drow{color:var(--muted)}
+.hp .hsub{font-size:12.5px;color:var(--muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hero .arrow{color:var(--muted)}
 .pathchip{background:var(--bg);color:var(--ink);border-radius:10px;padding:5px 10px;min-width:0;max-width:100%}
 .pathchip code{word-break:break-all;color:var(--ink)}
 .ver{position:absolute;top:10px;right:16px;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .stats{grid-column:2;grid-row:1 / span 3;display:flex;gap:10px}
-.hero .disk{grid-column:1;max-width:520px;font-size:13.5px}
+.hero .disk{grid-column:1;max-width:620px;font-size:13.5px}
 .disk .drow span,.disk .drow b{white-space:nowrap}.disk .drow{display:flex;justify-content:space-between;gap:12px;margin-bottom:5px;opacity:.9}.disk .drow b{font-weight:600}
 .disk .dbar{height:10px;border-radius:5px;background:var(--soft);overflow:hidden}
 .disk .dbar i{display:block;height:100%;width:0;border-radius:5px;background:var(--ok);transition:width .4s}
@@ -292,7 +296,7 @@ input[type=range]{accent-color:var(--brand);min-height:0;padding:0;border:0;back
   <span class="ver" title="Version und Prüfsumme der laufenden app.py">{{VERSION}}</span>
   <div class="brand"><img class="logo" src="/icon-192.png" alt="" width="64" height="64">
     <div><h1>MediaButler</h1><div class="claim">Sortiert, entpackt und serviert deine Medien.</div></div></div>
-  <div class="flow"><span class="pathchip" title="Quellordner">📥 <code id="src">…</code></span><span class="arrow" aria-hidden="true">➜</span><span class="pathchip" title="Ziel auf dem NFS-Share">🗄️ <code id="tgt">…</code></span></div>
+  <div class="hprog" id="hprog" aria-live="polite"></div>
   <div class="disk" id="disk" hidden title="Belegung des Ziel-Speichers">
     <div class="drow"><span>💾 Speicher</span><b id="disk-txt"></b></div>
     <div class="dbar"><i id="disk-bar"></i></div>
@@ -704,7 +708,6 @@ async function loadFiles(){
   $("shc").hidden=!nc;$("shcn").textContent=nc;$("shc").classList.toggle("on",showCopied);
   files.forEach(f=>{f.sel=marked.has(f.path)});
   const xe=r.extracting||{};$("exbar").hidden=!xe.n;$("extxt").textContent=`${xe.n} Archiv(e) werden entpackt oder warten darauf. Die Dateien erscheinen danach hier.`;
-  $("src").textContent=r.source;$("tgt").textContent=r.target;
   $("warn").innerHTML=r.target_mounted?"":'<div class="banner bad">⚠️ <span>Das Ziel ist nicht erreichbar. Ist das NFS-Share eingebunden?</span></div>';
   $("bchips").innerHTML=cats.map(c=>`<button class="chip" data-c="${c}">${ICON[c]} ${c}</button>`).join("");
   $("bchips").querySelectorAll("button").forEach(b=>b.onclick=()=>assign(files.filter(checked),b.dataset.c));
@@ -1245,10 +1248,19 @@ let exDone=-1;
 function drawDisk(d){const el=$("disk");el.hidden=!d;if(!d)return;
   el.classList.toggle("warn",d.pct>=85&&d.pct<95);el.classList.toggle("bad",d.pct>=95);
   $("disk-bar").style.width=d.pct+"%";$("disk-txt").textContent=`${d.pct.toFixed(0)} % belegt · ${fmt(d.free)} frei`;el.title=`${d.path}: ${fmt(d.used)} von ${fmt(d.total)} belegt`}
+function eta(s){if(!s.done||!s.elapsed)return"";const r=s.elapsed*(s.total-s.done)/s.done;return r>=60?`noch ${Math.round(r/60)} min`:`noch ${Math.max(1,Math.round(r))} s`}
+function drawHprog(s,pct){const ex=s.extract||{},rows=[];
+  if(s.running)rows.push({cls:"live",l:`⚡ Kopieren · ${s.files_done} von ${s.files_total} Dateien`,t:[pct.toFixed(0)+" %",s.speed?fmt(s.speed)+"/s":"",eta(s)].filter(Boolean).join(" · "),p:pct,sub:s.current||""});
+  if(ex.running)rows.push({cls:"live",l:`📦 Entpacken${ex.name?" · "+ex.name:""}`,t:(ex.pct||0)+" %",p:ex.pct||0,sub:ex.n>1?`${ex.n-1} weitere warten`:""});
+  else if(ex.n)rows.push({cls:"",l:`📦 ${ex.n} Archiv(e) warten aufs Entpacken`,t:"",p:0,sub:""});
+  const wn=(s.waiting||[]).length;if(wn&&!s.running)rows.push({cls:"",l:`📥 ${wn} Auftrag/Aufträge in der Warteschlange`,t:"",p:0,sub:""});
+  if(!rows.length)rows.push({cls:"idle",l:(+$("st-ready").textContent>0)?`📥 ${$("st-ready").textContent} Datei(en) bereit zum Kopieren`:s.finished&&s.files_total?`✅ Zuletzt: ${s.files_done} von ${s.files_total} Dateien`:"✅ Nichts zu tun",t:"",p:(+$("st-ready").textContent>0)?0:s.finished&&s.files_total?100:0,sub:""});
+  $("hprog").innerHTML=rows.map(r=>`<div class="hp ${r.cls}"><div class="drow"><span>${esc(r.l)}</span><b>${esc(r.t)}</b></div><div class="dbar"><i style="width:${Math.max(0,Math.min(100,r.p))}%"></i></div>${r.sub?`<div class="hsub">${esc(r.sub)}</div>`:""}</div>`).join("")}
 async function poll(){try{
   const s=await api("/api/status");
   running=s.running;drawDisk(s.disk);
   const pct=s.total?Math.min(100,s.done/s.total*100):0;
+  drawHprog(s,pct);
   $("pt").style.width=pct+"%";$("pct").textContent=pct.toFixed(0)+" %";
   $("pf").style.width=(s.current_size?s.current_done/s.current_size*100:0)+"%";
   $("cur").textContent=s.running?`${s.source||""}: ${s.current}`:"";
