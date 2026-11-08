@@ -994,18 +994,15 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 		c := d.conf()
 		if c.DDKey != "" {
 			var info struct {
-				Status int    `json:"status"`
-				Msg    string `json:"msg"`
-				Result struct {
-					Email, Premium_expire string
-					Premium               bool `json:"premium"`
-				} `json:"result"`
+				Status int            `json:"status"`
+				Msg    string         `json:"msg"`
+				Result map[string]any `json:"result"`
 			}
 			if err := d.apiJSON(ctx, fmt.Sprintf("%s/account/info?key=%s", ddAPI, url.QueryEscape(c.DDKey)), &info); err != nil || info.Status != 200 {
 				js(w, 200, M{"ok": false, "error": firstNonEmpty(info.Msg, "API-Key ungültig oder nicht erreichbar")})
 				return
 			}
-			js(w, 200, M{"ok": true, "info": "API-Key ok" + map[bool]string{true: ", Premium aktiv", false: ", kein Premium"}[info.Result.Premium]})
+			js(w, 200, M{"ok": true, "info": "API-Key ok" + premiumInfo(info.Result)})
 			return
 		}
 		if err := d.ddLogin(ctx, c); err != nil {
@@ -1027,4 +1024,37 @@ func (d *dlManager) routes(get, post func(string, http.HandlerFunc)) {
 		post("/api/cnl"+p, cnl)
 		d.opt = append(d.opt, "/api/cnl"+p)
 	}
+}
+
+// premiumInfo wertet die Felder der ddownload-API tolerant aus (premium_expire, premium bool/Zahl/Text).
+func premiumInfo(res map[string]any) string {
+	if exp := strings.TrimSpace(fmt.Sprint(res["premium_expire"])); res["premium_expire"] != nil && exp != "" && exp != "0" && exp != "<nil>" {
+		for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02", time.RFC3339} {
+			if t, err := time.ParseInLocation(layout, exp, time.UTC); err == nil {
+				if t.After(time.Now()) {
+					return ", Premium aktiv bis " + t.Format("02.01.2006")
+				}
+				return ", Premium abgelaufen am " + t.Format("02.01.2006")
+			}
+		}
+		return ", Premium bis " + exp
+	}
+	switch v := res["premium"].(type) {
+	case bool:
+		if v {
+			return ", Premium aktiv"
+		}
+	case float64:
+		if v > 0 {
+			return ", Premium aktiv"
+		}
+	case string:
+		if v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") {
+			return ", Premium aktiv"
+		}
+	}
+	if anyInt(res["premium_traffic"]) > 0 || anyInt(res["traffic_left"]) > 0 {
+		return ", Premium-Traffic vorhanden"
+	}
+	return " (die API meldet keinen Premium-Status, Direktlinks werden trotzdem versucht)"
 }
