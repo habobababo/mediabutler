@@ -421,7 +421,6 @@ button.primary{box-shadow:0 3px 12px rgba(139,212,156,.22)}
     <span id="sel" class="sub"></span><span class="sub hide-m" style="margin-left:auto">💡 Shift+Klick markiert einen Bereich, Strg+A alles</span>
   </div></section>
   <div id="ambar" class="bulk" hidden></div>
-  <div id="series" class="bulk series" hidden><b>📺 Serien erkannt</b><span class="sub">Tippen zum Umbenennen oder Zuordnen</span><div class="chips" id="schips"></div></div>
   <div id="bulk" class="bulk" hidden><b id="bn"></b><div class="chips" id="bchips"></div><button id="gbtn">👥 Neue Gruppe</button><button id="dbtn" class="danger">🗑️ Löschen</button><button id="fbtn">📂 Zielordner ändern</button><button id="mbtn" hidden>🗓️ Jahr &amp; TMDB</button></div>
   <div class="table"><table>
     <thead><tr><th style="width:40px"><input type="checkbox" id="master" aria-label="Alle"></th><th>🎞️ Datei</th><th style="width:170px">🏷️ Kategorie</th><th>📍 Wird abgelegt als</th><th>💾 Größe</th></tr></thead>
@@ -961,20 +960,6 @@ async function loadAuto(){try{const r=await api("/api/automatch"),b=$("ambar");
   b.querySelectorAll("[data-adis]").forEach(x=>x.onclick=async()=>{await api("/api/automatch/dismiss",{key:x.dataset.adis});gone(x);loadFiles()});
   b.querySelectorAll("[data-aretry]").forEach(x=>x.onclick=async()=>{await api("/api/automatch/retry",{key:x.dataset.aretry});toast("Suche läuft …","ok");setTimeout(loadFiles,4000)});
  }catch{}}
-function seriesBar(){
-  const m=new Map();
-  visible().forEach(f=>{const s=f.series;if(!s)return;const e=m.get(s.key)||{key:s.key,names:{},files:[],cats:{}};
-    e.names[s.name]=(e.names[s.name]||0)+1;e.files.push(f);e.cats[f.category||"?"]=(e.cats[f.category||"?"]||0)+1;m.set(s.key,e)});
-  const list=[...m.values()].filter(e=>e.files.length>=1).sort((a,b)=>b.files.length-a.files.length).slice(0,40);
-  seriesList=list;$("series").hidden=sgrouped||!list.length;
-  $("schips").innerHTML=list.map((e,i)=>{const n=Object.entries(e.names).sort((a,b)=>b[1]-a[1])[0][0];
-    const c=Object.entries(e.cats).sort((a,b)=>b[1]-a[1])[0][0];
-    const gp=gaps(e.files).bad.length?" · ⚠ Lücke":"";
-    return `<button class="chip" data-s="${i}"><b>${esc(n)}</b> <small>${e.files.length} · ${c==="?"?"❓ unklar":ICON[c]+" "+c}${gp}</small></button>`}).join("");
-  const sc=$("schips");sc.querySelectorAll("button[data-s]").forEach(b=>b.onclick=()=>openSeries(seriesList[b.dataset.s]));
-  const all=[...sc.querySelectorAll("button[data-s]")];
-  if(all.length>6){const rest=all.slice(6);const t=document.createElement("button");t.className="chip more";let open=false;
-    const upd=()=>{rest.forEach(x=>x.hidden=!open);t.textContent=open?"weniger":`+${rest.length} weitere`};t.onclick=()=>{open=!open;upd()};upd();sc.appendChild(t)}}
 let seriesList=[],curSeries=null,ptm,library={};
 const rng=a=>{const o=[];for(let i=0;i<a.length;){let j=i;while(j+1<a.length&&a[j+1]===a[j]+1)j++;o.push(i===j?`E${String(a[i]).padStart(2,"0")}`:`E${String(a[i]).padStart(2,"0")}–E${String(a[j]).padStart(2,"0")}`);i=j+1}return o.join(", ")};
 const showDir=t=>{const p=t.split("/"),i=p.findIndex(x=>/^Season \d+$/.test(x));return(i>1?p.slice(0,i):p.slice(0,2)).join("/")};
@@ -1130,7 +1115,7 @@ function tabs(){
   $("tabs").hidden=!kinds.length;
   $("tabs").innerHTML=kinds.map(c=>`<button class="chip ${c===filter?"on":""}" data-c="${c==="Klärung"?"":"Alle"}" data-k="${c}">${c==="Klärung"?"❓ Braucht dich":"👯 Duplikate"} <i>${c==="Klärung"?u:dn}</i></button>`).join("");
   $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=filter===b.dataset.k?"Alle":b.dataset.k;tabs();render()});
-  stats();seriesBar()}
+  stats()}
 let fqs="";
 const hay=f=>(f.path+" "+(f.series?f.series.name+" "+f.series.orig:"")+" "+(f.target||"")).toLowerCase();
 const visible=()=>files.filter(f=>(filter==="Alle"||(filter==="Klärung"?!f.category:filter==="Doppelt"?!!(f.dup&&f.dup.n):f.category===filter))&&(!fqs||fqs.every(w=>hay(f).includes(w))));
