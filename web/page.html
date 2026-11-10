@@ -1167,15 +1167,19 @@ function render(){
         <td class="c"><select data-g="${gi}" aria-label="Ganze Serie zuordnen">${catOpts("Serie zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
         +(open?fs.map(f=>row(f,false)).join(""):"")})
   }else if(grouped){
-    const g=new Map();list.forEach(f=>{const k=f.path.includes("/")?f.path.split("/")[0]:"";if(!g.has(k))g.set(k,[]);g.get(k).push(f)});
-    [...g.keys()].sort((a,b)=>(a===""?1:0)-(b===""?1:0)||a.localeCompare(b)).forEach(k=>{
-      const fs=g.get(k),gi=groups.push(fs)-1,cnt={},key="d:"+k,open=sopen.has(key)||!!fqs;sgroups[gi]={key};
+    // Eigene (manuell angelegte) Gruppen erscheinen sofort als eigene Gruppe, der Rest nach Quellordner
+    const g=new Map(),lab=new Map();list.forEach(f=>{const man=f.series&&f.series.manual;
+      const k=man?"s:"+f.series.key:(f.path.includes("/")?f.path.split("/")[0]:"");
+      if(man)lab.set(k,f.series.name);if(!g.has(k))g.set(k,[]);g.get(k).push(f)});
+    const lbl=k=>lab.has(k)?lab.get(k):k;
+    [...g.keys()].sort((a,b)=>(a===""?1:0)-(b===""?1:0)||lbl(a).localeCompare(lbl(b))).forEach(k=>{
+      const fs=g.get(k),gi=groups.push(fs)-1,cnt={},key="d:"+k,open=sopen.has(key)||!!fqs,man=lab.has(k);sgroups[gi]={key};
       if(fs.length===1){const gp=fs[0].series?gaps(fs).bad.length:0;html+=row(fs[0],false,fs[0].series?gapHtml(fs):"",`solo${gp?" hasgap":""}`);return}
       const sks=new Set(fs.map(f=>f.series?f.series.key:"")),one=sks.size===1&&!sks.has("");
       fs.forEach(f=>{const c=f.category||"?";cnt[c]=(cnt[c]||0)+1});
       const summ=Object.entries(cnt).map(([c,n])=>c==="?"?`<span class="tag warn">❓ ${n} unklar</span>`:`<span class="tag cat" style="--cc:var(--c-${c})">${ICON[c]} ${n}</span>`).join(" ");
       html+=`<tr class="grow fg${one&&gaps(fs).bad.length?" hasgap":""}" data-tg="${gi}"><td class="chk"><input type="checkbox" data-g="${gi}" aria-label="Ordner markieren"></td>
-        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Dateien ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>📁 <b>${k?esc(k):"Lose Dateien"}</b> ${(()=>{const x=autoOf(fs);return x?autoTag(x):""})()} <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div>${one?gapHtml(fs):""}</td>
+        <td class="f" colspan="2"><button type="button" class="cv" data-tg="${gi}" aria-expanded="${open}" aria-label="Dateien ${open?"einklappen":"ausklappen"}">${open?"▾":"▸"}</button>${man?"👥":"📁"} <b>${man?esc(lbl(k)):k?esc(k):"Lose Dateien"}</b> ${(()=>{const x=autoOf(fs);return x?autoTag(x):""})()} <span class="sub">${fs.length} Datei(en), ${fmt(fs.reduce((a,f)=>a+f.size,0))}</span><div style="margin-top:4px">${summ}</div>${one?gapHtml(fs):""}</td>
         <td class="c"><select data-g="${gi}" aria-label="Ganzen Ordner zuordnen">${catOpts("Ordner zuordnen als…")}</select>${gpath(fs)}</td><td class="s"></td></tr>`
         +(open?fs.map(f=>row(f,true)).join(""):"")})
   }else html=list.map(f=>row(f)).join("");
@@ -1270,7 +1274,9 @@ async function gprev(){
 ["gcat","gmode"].forEach(id=>$(id).addEventListener("change",gprev));
 $("gcancel").onclick=()=>$("gdlg").close();
 $("gform").onsubmit=async ev=>{ev.preventDefault();
-  try{const r=await api("/api/groups",gBody());$("gdlg").close();await reloadKeep();toast(`Gruppe mit ${r.n} Datei(en) angelegt`,"ok")}
+  try{const r=await api("/api/groups",gBody());$("gdlg").close();const mine=new Set(gFiles.map(f=>f.path));await reloadKeep();
+    files.forEach(f=>{if(mine.has(f.path)&&f.series&&f.series.manual){sopen.add("d:s:"+f.series.key);sopen.add(f.series.key)}});render();
+    toast(`Gruppe mit ${r.n} Datei(en) angelegt`,"ok")}
   catch(e){toast(e.message,"bad")}};
 async function dissolveGroup(list){
   const fs=list.filter(f=>f.series&&f.series.manual);
